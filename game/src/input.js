@@ -49,6 +49,13 @@ export function keyDown(input, ...names) {
   return false;
 }
 
+// Drop every buffered edge press: call it when the game changes state
+// (title -> play, play -> pause and back) so a key tapped in one screen
+// cannot fire an action in the next one.
+export function clearPressed(input) {
+  input.pressed.clear();
+}
+
 // Edge-triggered key: true once per press, consumed on read. Kept for
 // callers that track their own previous set; the game itself uses the
 // input.pressed buffer through game.edge().

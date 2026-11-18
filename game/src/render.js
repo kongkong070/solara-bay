@@ -1,8 +1,8 @@
 // Everything the player sees: the city from above, cars, people, the HUD
 // with its minimap, and the menus. Top-down, sun-soaked, original art drawn
 // in code — no image assets.
-import { WORLD, COLORS, VIEW } from './config.js';
-import { clamp, fmtCash, fmtClock } from './random.js';
+import { WORLD, COLORS, VIEW, DIFFICULTY, DIFFICULTY_ORDER, difficultyTuning } from './config.js';
+import { clamp, fmtCash, fmtClock, fmtDuration } from './random.js';
 import { isOnRoad, buildingAt } from './world.js';
 import { currentStage, missionMarker } from './missions.js';
 
@@ -494,6 +494,18 @@ export function drawHUD(ctx, game) {
     ctx.font = 'bold 15px sans-serif';
     ctx.fillText('TAXI  ' + fmtCash(game.taxi.fare) + '  •  ' + Math.ceil(game.taxi.timer) + 's', 26, 184);
   }
+  // Difficulty pill, top-centre: the active mode is always visible in play.
+  const tune = difficultyTuning(game.difficulty);
+  const diffLabel = tune.label.toUpperCase();
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  const diffW = ctx.measureText(diffLabel).width + 34;
+  roundRect(ctx, VIEW.width / 2 - diffW / 2, 12, diffW, 26, 8);
+  ctx.fill();
+  ctx.fillStyle = game.difficulty === 'hardcore' ? '#ff5a4a' : game.difficulty === 'chill' ? '#7ab8e0' : '#ffd76a';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('◆ ' + diffLabel, VIEW.width / 2, 30);
+  ctx.textAlign = 'left';
   // Bottom-left: speed and radio while driving.
   if (p.inCar) {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -696,7 +708,10 @@ export function drawTitle(ctx, game) {
   ctx.font = '16px sans-serif';
   ctx.fillStyle = '#ffd76a';
   ctx.fillText('A completely original game. No Rockstar content, no borrowed assets.', VIEW.width / 2, 264);
-  panel(ctx, VIEW.width / 2 - 260, 300, 520, game.saveExists ? 250 : 210);
+  // The panel grows when a save exists; the difficulty row sits under the
+  // controls, above the feature line.
+  const saveY = game.saveExists;
+  panel(ctx, VIEW.width / 2 - 260, 300, 520, saveY ? 314 : 274);
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 20px sans-serif';
   ctx.fillText('CLICK or press ENTER to play', VIEW.width / 2, 344);
@@ -707,35 +722,69 @@ export function drawTitle(ctx, game) {
   }
   ctx.font = '15px sans-serif';
   ctx.fillStyle = '#cfd8e8';
-  ctx.fillText('WASD move / drive  •  E enter car  •  F punch  •  Mouse shoot', VIEW.width / 2, game.saveExists ? 414 : 384);
-  ctx.fillText('M start mission  •  P pause  •  C radio  •  Q mute  •  N / wheel zoom minimap', VIEW.width / 2, game.saveExists ? 440 : 410);
+  ctx.fillText('WASD move / drive  •  E enter car  •  F punch  •  Mouse shoot', VIEW.width / 2, saveY ? 414 : 384);
+  ctx.fillText('M start mission  •  P pause  •  C radio  •  Q mute  •  N / wheel zoom minimap', VIEW.width / 2, saveY ? 440 : 410);
+  // Difficulty selector: 1 Chill, 2 Normal, 3 Hardcore. The active one is
+  // filled gold; the others are outlined.
+  const diffY = saveY ? 466 : 436;
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 15px sans-serif';
-  ctx.fillText('8 story missions  •  taxi fares  •  12 hidden packages  •  10 supply crates  •  5 wanted stars', VIEW.width / 2, game.saveExists ? 478 : 448);
+  ctx.fillText('DIFFICULTY — press 1 / 2 / 3', VIEW.width / 2, diffY);
+  const boxW = 150;
+  const boxH = 30;
+  const gap = 10;
+  const totalW = boxW * 3 + gap * 2;
+  let bx = VIEW.width / 2 - totalW / 2;
+  for (let i = 0; i < DIFFICULTY_ORDER.length; i += 1) {
+    const name = DIFFICULTY_ORDER[i];
+    const selected = game.difficulty === name;
+    ctx.fillStyle = selected ? '#ffd76a' : 'rgba(255,255,255,0.08)';
+    roundRect(ctx, bx, diffY + 12, boxW, boxH, 8);
+    ctx.fill();
+    ctx.strokeStyle = selected ? '#ffd76a' : 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, bx, diffY + 12, boxW, boxH, 8);
+    ctx.stroke();
+    ctx.fillStyle = selected ? '#20242c' : '#fff';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText((i + 1) + '  ' + DIFFICULTY[name].label.toUpperCase(), bx + boxW / 2, diffY + 32);
+    bx += boxW + gap;
+  }
+  ctx.fillStyle = '#cfd8e8';
+  ctx.font = '13px sans-serif';
+  ctx.fillText(difficultyTuning(game.difficulty).desc, VIEW.width / 2, diffY + 58);
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText('8 story missions  •  taxi fares  •  12 hidden packages  •  11 supply crates  •  5 wanted stars', VIEW.width / 2, saveY ? 542 : 512);
   ctx.font = '13px sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.fillText('Progress saves automatically after each mission.', VIEW.width / 2, game.saveExists ? 510 : 478);
+  ctx.fillText('Progress saves automatically after each mission.', VIEW.width / 2, saveY ? 574 : 542);
   ctx.textAlign = 'left';
 }
 
 export function drawPause(ctx, game) {
   ctx.fillStyle = 'rgba(8,12,22,0.6)';
   ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-  panel(ctx, VIEW.width / 2 - 250, 180, 500, 300);
+  // Run statistics: progress, money, time played, difficulty and lifetime
+  // earnings, so the pause screen is the run's scorecard.
+  panel(ctx, VIEW.width / 2 - 250, 160, 500, 360);
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 34px sans-serif';
-  ctx.fillText('PAUSED', VIEW.width / 2, 236);
+  ctx.fillText('PAUSED', VIEW.width / 2, 216);
   ctx.fillStyle = '#fff';
   ctx.font = '17px sans-serif';
   const m = game.missions;
-  ctx.fillText('Missions done: ' + m.completed + ' / ' + m.list.length, VIEW.width / 2, 282);
-  ctx.fillText('Cash: ' + fmtCash(game.player.cash) + '   •   Fares: ' + game.stats.fares + '   •   Packages: ' + game.stats.packages + '/12', VIEW.width / 2, 312);
-  ctx.fillText('Supplies: ' + (game.stats.pickups || 0) + '   •   Cars stolen: ' + game.stats.stolen + '   •   Best wanted: ' + game.stats.bestWanted + '★', VIEW.width / 2, 342);
+  ctx.fillText('Missions done: ' + m.completed + ' / ' + m.list.length, VIEW.width / 2, 262);
+  ctx.fillText('Cash: ' + fmtCash(game.player.cash) + '   •   Fares: ' + game.stats.fares + '   •   Packages: ' + game.stats.packages + '/12', VIEW.width / 2, 292);
+  ctx.fillText('Supplies: ' + (game.stats.pickups || 0) + '   •   Cars stolen: ' + game.stats.stolen + '   •   Best wanted: ' + game.stats.bestWanted + '★', VIEW.width / 2, 322);
+  ctx.fillStyle = '#7ab8e0';
+  ctx.fillText('Time played: ' + fmtDuration(game.time) + '   •   Difficulty: ' + difficultyTuning(game.difficulty).label, VIEW.width / 2, 352);
+  ctx.fillText('Total earned this run: ' + fmtCash(game.stats.earned || 0), VIEW.width / 2, 382);
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 17px sans-serif';
-  ctx.fillText('P or Esc to resume  •  M next mission  •  Q mute', VIEW.width / 2, 392);
-  ctx.fillText('R restart the run (keeps your save)', VIEW.width / 2, 424);
+  ctx.fillText('P or Esc to resume  •  M next mission  •  Q mute', VIEW.width / 2, 432);
+  ctx.fillText('R restart the run (keeps your save)', VIEW.width / 2, 464);
   ctx.textAlign = 'left';
 }
 

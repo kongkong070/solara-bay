@@ -74,7 +74,11 @@ function giveSportCar(game, x, y, angle) {
   return car;
 }
 
-export function stageShot(name, game) {
+export function stageShot(name, game, difficulty) {
+  // A ?difficulty=chill|normal|hardcore query pins the scene's difficulty,
+  // so the staged frames are reproducible and the title shot can show a
+  // non-default pick. Unknown values fall back to Normal.
+  game.difficulty = ['chill', 'normal', 'hardcore'].includes(difficulty) ? difficulty : 'normal';
   game.reset(20261118);
   game.audio.muted = true;
   if (name === 'chase') {

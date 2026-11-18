@@ -1,6 +1,8 @@
 // Cars: arcade driving physics, traffic that follows the road grid, parked
 // cars to steal, and police interceptors. One shape, many paint jobs.
-import { WORLD, CAR } from './config.js';
+// Traffic pace scales with the difficulty: Chill streets cruise slower,
+// Hardcore traffic keeps up with a getaway.
+import { WORLD, CAR, difficultyTuning } from './config.js';
 import { clamp, angleDiff, pick, range, rangeInt } from './random.js';
 import { collideBuildings, clampToWorld, isOnRoad, nearestRoadPoint, randomRoadPoint } from './world.js';
 
@@ -114,7 +116,7 @@ export function spawnTraffic(game, count) {
     const type = pick(game.rng, ['sedan', 'sedan', 'taxi', 'coupe', 'van', 'truck', 'muscle']);
     const car = makeCar(game.rng, type, p.x, p.y, game.rng() * Math.PI * 2);
     car.driver = 'traffic';
-    car.cruise = range(game.rng, -30, 60);
+    car.cruise = range(game.rng, -30, 60) * difficultyTuning(game.difficulty).trafficMul;
     game.cars.push(car);
   }
 }

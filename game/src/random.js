@@ -73,3 +73,13 @@ export function fmtClock(minutes) {
   const m = Math.floor(minutes % 60);
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 }
+
+// Run time as m:ss or h:mm:ss, for the pause menu's run statistics.
+export function fmtDuration(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const rest = s % 60;
+  if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(rest).padStart(2, '0');
+  return m + ':' + String(rest).padStart(2, '0');
+}

@@ -6,7 +6,9 @@
 // /output/dossier.json, the summary the judge reads, with the vendored
 // make.fun library (vendor/makefun-game.ts, the kit's copy, unchanged).
 // Eight story missions, a day/night cycle with headlights, supply crates,
-// a labelled zoomable minimap and a rebalanced wanted system.
+// a labelled zoomable minimap, a rebalanced wanted system, three difficulty
+// modes (Chill / Normal / Hardcore, picked with 1/2/3 on the title screen)
+// and a pause menu that reports the run's statistics.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
@@ -26,9 +28,15 @@ mkdirSync(join(out, 'screenshots'), { recursive: true });
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
 
 // shots.json is the source of truth for the four screenshots: every file it
-// names must exist, so a renamed scene cannot silently ship a stale frame.
+// names must exist, so a renamed scene cannot silently ship a stale frame,
+// and every query must name a scene the game actually stages.
+const SCENES = ['chase', 'mission', 'start', 'night', 'ledger'];
 const shots = JSON.parse(readFileSync(join(here, 'shots.json'), 'utf8'));
 for (const shot of shots) {
+  const scene = new URLSearchParams(shot.query.replace(/^\?/, '')).get('shot');
+  if (!SCENES.includes(scene)) {
+    throw new Error('shots.json names unknown scene ' + scene + ' (known: ' + SCENES.join(', ') + ')');
+  }
   if (!existsSync(join(here, 'screenshots', shot.name))) {
     throw new Error('shots.json names ' + shot.name + ' but screenshots/' + shot.name + ' is missing');
   }

@@ -1,9 +1,9 @@
 // Solara Bay — entry point. Builds the game state, runs the loop, wires
 // every system together and serves the deterministic screenshot scenes.
-import { WORLD, VIEW, DAY, LIGHTING } from './config.js';
+import { WORLD, VIEW, DAY, LIGHTING, DIFFICULTY_ORDER, difficultyTuning } from './config.js';
 import { makeRng, clamp } from './random.js';
 import { createWorld, collideBuildings, clampToWorld, updatePickups } from './world.js';
-import { createInput, keyDown } from './input.js';
+import { createInput, keyDown, clearPressed } from './input.js';
 import { createAudio } from './audio.js';
 import { makePlayer, updatePlayer, hurtPlayer } from './player.js';
 import { spawnTraffic, spawnParked, updateTraffic } from './vehicles.js';
@@ -51,7 +51,8 @@ export function createGame() {
     bannerT: 0,
     storyComplete: false,
     minimapZoom: 1, // 0 small, 1 normal, 2 large: N key or mouse wheel
-    stats: { fares: 0, packages: 0, stolen: 0, bestWanted: 0, pickups: 0 },
+    difficulty: 'normal', // chill | normal | hardcore, picked on the title screen (1/2/3)
+    stats: { fares: 0, packages: 0, stolen: 0, bestWanted: 0, pickups: 0, earned: 0 },
     saveExists: false,
     saveSummary: '',
     edge(name) {
@@ -117,7 +118,9 @@ function resetGame(game, seed) {
   game.bannerT = 0;
   game.storyComplete = false;
   game.minimapZoom = 1;
-  game.stats = { fares: 0, packages: 0, stolen: 0, bestWanted: 0, pickups: 0 };
+  game.stats = { fares: 0, packages: 0, stolen: 0, bestWanted: 0, pickups: 0, earned: 0 };
+  // Starting cash follows the difficulty: Chill starts rich, Hardcore broke.
+  game.player.cash = difficultyTuning(game.difficulty).startCash;
   spawnTraffic(game, 14);
   spawnParked(game, 12);
   spawnPeds(game, 64);
@@ -129,8 +132,17 @@ function startGame(game, useSave) {
   game.reset(game.seed);
   if (useSave && game.pendingSave) applySave(game, game.pendingSave);
   game.state = 'play';
+  clearPressed(game.input);
   game.audio.ensure();
   game.banner('Solara Bay', 'Find Lena at the garage — press M to start your first mission.', 5);
+}
+
+// Pick a difficulty on the title screen. The choice sticks for the run
+// (and, through the save, for the next one) until the player picks another.
+function setDifficulty(game, name) {
+  if (game.difficulty === name) return;
+  game.difficulty = name;
+  game.audio.select();
 }
 
 function endRun(game, kind) {
@@ -265,6 +277,7 @@ function updateGame(game, dt) {
   // Global keys.
   if (game.edge('p') || game.edge('Escape')) {
     game.state = 'pause';
+    clearPressed(game.input);
     game.audio.setEngine(0, false);
   }
   if (game.edge('q')) game.audio.toggleMute();
@@ -312,7 +325,7 @@ window.__game = game;
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 if (shot) {
-  stageShot(shot, game);
+  stageShot(shot, game, params.get('difficulty'));
   game.render();
   window.__shotReady = true;
 } else {
@@ -323,9 +336,14 @@ if (shot) {
     if (game.state === 'title') {
       if (game.edge('Enter') || game.input.mouse.clicked) startGame(game, false);
       else if (game.edge('c') && game.saveExists) startGame(game, true);
+      // Difficulty pick: 1 Chill, 2 Normal, 3 Hardcore. The buffered press
+      // is cleared on start, so a difficulty key never leaks into play.
+      else if (game.edge('1')) setDifficulty(game, DIFFICULTY_ORDER[0]);
+      else if (game.edge('2')) setDifficulty(game, DIFFICULTY_ORDER[1]);
+      else if (game.edge('3')) setDifficulty(game, DIFFICULTY_ORDER[2]);
       game.update(dt);
     } else if (game.state === 'pause') {
-      if (game.edge('p') || game.edge('Escape')) game.state = 'play';
+      if (game.edge('p') || game.edge('Escape')) { game.state = 'play'; clearPressed(game.input); }
       else if (game.edge('r')) startGame(game, false);
       else if (game.edge('m') && !game.missions.active && game.missions.index < game.missions.list.length) {
         game.state = 'play';

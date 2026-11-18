@@ -5,4 +5,5 @@ RULES.txt
 requirements.json
 howto.txt
 *.log
+*.tmp
 .DS_Store

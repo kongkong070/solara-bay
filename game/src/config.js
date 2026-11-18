@@ -49,9 +49,46 @@ export const LIGHTING = {
   nightEnd: 6 * 60, // 06:00 dawn breaks
 };
 
+// Difficulty modes, picked on the title screen with 1 / 2 / 3 and kept in
+// the save. Each one retunes the same systems: police heat and response,
+// mission timers, payouts, starting cash, taxi clocks, traffic pace and
+// how fast pedestrians scatter. Normal is the intended experience.
+export const DIFFICULTY = {
+  chill: {
+    label: 'Chill', heatPerCrime: 18, calmSeconds: 5,
+    footCopCap: [0, 0, 1, 1, 2, 2], copSpeedMul: 0.9,
+    missionTimeMul: 1.25, rewardMul: 0.8, startCash: 300,
+    taxiSeconds: 90, trafficMul: 0.85, fleeMul: 0.9,
+    desc: 'Relaxed: slower heat, kinder timers, smaller payouts.',
+  },
+  normal: {
+    label: 'Normal', heatPerCrime: 26, calmSeconds: 7,
+    footCopCap: [0, 0, 2, 2, 3, 3], copSpeedMul: 1.0,
+    missionTimeMul: 1.0, rewardMul: 1.0, startCash: 150,
+    taxiSeconds: 75, trafficMul: 1.0, fleeMul: 1.0,
+    desc: 'The intended Solara Bay experience.',
+  },
+  hardcore: {
+    label: 'Hardcore', heatPerCrime: 36, calmSeconds: 10,
+    footCopCap: [0, 1, 2, 3, 3, 4], copSpeedMul: 1.12,
+    missionTimeMul: 0.8, rewardMul: 1.5, startCash: 100,
+    taxiSeconds: 60, trafficMul: 1.12, fleeMul: 1.15,
+    desc: 'Fast heat, faster cops, tight timers — but 50% richer payouts.',
+  },
+};
+
+export const DIFFICULTY_ORDER = ['chill', 'normal', 'hardcore'];
+
+// Unknown or missing names fall back to Normal, so an old save or a
+// hand-edited URL never breaks the game.
+export function difficultyTuning(name) {
+  return DIFFICULTY[name] || DIFFICULTY.normal;
+}
+
 // Wanted stars: 0 calm .. 5 army of police. Police response grows with the level.
 // Revision: heat builds slower (26 per crime instead of 34) so one mistake
 // does not snowball, but high wanted levels now send more foot cops.
+// (Difficulty retunes these numbers at run time; see DIFFICULTY above.)
 export const WANTED = [
   { cops: 0, copSpeed: 0, label: 'Clean' },
   { cops: 1, copSpeed: 320, label: 'One star' },
@@ -67,6 +104,9 @@ export const POLICE_TUNING = {
   footCopCap: [0, 0, 2, 2, 3, 3], // by wanted level; was capped at 2
   spawnInterval: 2.2, // was 2.5 s between interceptor spawns
 };
+// The three numbers above are the Normal baseline: at run time the active
+// difficulty (DIFFICULTY) overrides heatPerCrime, calmSeconds and
+// footCopCap, and scales interceptor top speed and foot-cop speed.
 
 export const ECONOMY = {
   startCash: 150,

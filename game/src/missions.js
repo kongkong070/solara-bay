@@ -1,6 +1,9 @@
 // Story and side work in Solara Bay. Eight story missions with Lena Cruz,
 // plus taxi fares and the hidden packages. The mission engine is a small
 // stage machine: each stage names a place or a deed, and the HUD points at it.
+// Difficulty scales the timed stages (Chill is generous, Hardcore is tight)
+// and every payout (Hardcore pays 50% more, Chill 20% less).
+import { difficultyTuning } from './config.js';
 import { fmtCash } from './random.js';
 import { randomRoadPoint } from './world.js';
 
@@ -112,7 +115,8 @@ function applyStageStart(game) {
   const m = game.missions;
   const st = m.active.stages[m.stageIndex];
   if (!st) return;
-  if (st.time) m.stageT = st.time;
+  // Timed stages stretch or shrink with the difficulty.
+  if (st.time) m.stageT = st.time * difficultyTuning(game.difficulty).missionTimeMul;
   if (st.wantedOnStart) {
     game.police.wanted = st.wantedOnStart;
     game.police.heat = 0;
@@ -154,11 +158,15 @@ function completeStage(game) {
 function completeMission(game) {
   const m = game.missions;
   const def = m.active;
-  game.player.cash += def.reward;
+  // The payout scales with the difficulty, and the run's earnings total
+  // feeds the pause menu's statistics.
+  const reward = Math.round(def.reward * difficultyTuning(game.difficulty).rewardMul);
+  game.player.cash += reward;
+  game.stats.earned = (game.stats.earned || 0) + reward;
   m.completed += 1;
   m.index = Math.max(m.index, m.completed);
-  game.banner('Mission complete: ' + def.title, 'Paid ' + fmtCash(def.reward) + ' — ' + m.completed + ' of ' + m.list.length + ' missions done.', 5);
-  game.floater(game.player.x, game.player.y - 50, '+' + fmtCash(def.reward), '#7ae08a');
+  game.banner('Mission complete: ' + def.title, 'Paid ' + fmtCash(reward) + ' — ' + m.completed + ' of ' + m.list.length + ' missions done.', 5);
+  game.floater(game.player.x, game.player.y - 50, '+' + fmtCash(reward), '#7ae08a');
   game.audio.missionDone();
   game.saveGame();
   if (m.completed >= m.list.length) {
@@ -221,12 +229,15 @@ export function makeTaxi() {
 
 export function taxiStart(game, ped) {
   const taxi = game.taxi;
+  const tune = difficultyTuning(game.difficulty);
   const dest = randomRoadPoint(game.rng, game.player, 700);
   taxi.active = true;
   taxi.ped = ped;
   taxi.target = dest;
-  taxi.timer = 75;
-  taxi.fare = 45 + Math.round(Math.hypot(dest.x - game.player.x, dest.y - game.player.y) * 0.08);
+  // The fare clock is kinder on Chill, tighter on Hardcore; the fare itself
+  // scales with the difficulty payout like mission rewards do.
+  taxi.timer = tune.taxiSeconds;
+  taxi.fare = Math.round((45 + Math.round(Math.hypot(dest.x - game.player.x, dest.y - game.player.y) * 0.08)) * tune.rewardMul);
   taxi.waitT = 0;
   ped.state = 'taxi';
   game.banner('Taxi fare', 'Get your passenger to the marker — ' + fmtCash(taxi.fare) + ' if you make it in time.', 4);
@@ -250,6 +261,7 @@ export function updateTaxi(game, dt) {
     const d = Math.hypot(p.x - taxi.target.x, p.y - taxi.target.y);
     if (d < 70) {
       p.cash += taxi.fare;
+      game.stats.earned = (game.stats.earned || 0) + taxi.fare;
       game.floater(taxi.target.x, taxi.target.y - 30, '+' + fmtCash(taxi.fare), '#7ae08a');
       game.audio.missionDone();
       game.stats.fares += 1;

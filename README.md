@@ -26,10 +26,23 @@ Or open `game/index.html` through any static server. The game is only static fil
 | Space | Handbrake |
 | Shift | Sprint |
 | M | Start the next story mission |
+| 1 / 2 / 3 | Pick a difficulty on the title screen (Chill / Normal / Hardcore) |
 | C | Change radio station (while driving) |
 | N / mouse wheel | Zoom the minimap |
-| P / Esc | Pause |
+| P / Esc | Pause — the pause screen reports the run's statistics |
 | Q | Mute |
+
+## Difficulty
+
+Three modes, picked with **1 / 2 / 3** on the title screen and kept in your save:
+
+| Mode | Police heat | Timers | Payouts | Starting cash |
+| --- | --- | --- | --- | --- |
+| **Chill** | Slow heat, cops cool off after 5 s hidden | 25% more time | 20% less | $300 |
+| **Normal** | The intended experience | As designed | As designed | $150 |
+| **Hardcore** | Fast heat, a 4th foot cop at five stars, faster interceptors | 20% less time | 50% more | $100 |
+
+The active mode is always visible in the HUD's top-centre pill, and the pause menu shows the run's time played, difficulty and total earnings alongside missions, fares, packages and best wanted level.
 
 ## What's in the city
 
@@ -37,14 +50,14 @@ Or open `game/index.html` through any static server. The game is only static fil
 - **Driving**: arcade car physics with drift and handbrake; sedans, taxis, sports cars, trucks, vans, coupes and the new Bandit Muscle to steal and drive.
 - **Wanted system**: five stars. Steal a car, hit a pedestrian or open fire and the SBPD sends interceptors and foot cops; hide to cool the heat, or get busted. Rebalanced: heat builds slower (26 per crime), a star cools off after 7 seconds hidden instead of 9, and high wanted levels send up to three foot cops.
 - **Story**: eight missions — *Welcome to Solara*, *Wheels Up*, *Special Delivery*, *The Getaway*, *Harbor Heist*, *King of Solara*, plus the new *Beach Party* (a timed crate run on the sand) and *Midnight Ledger* (a night drive to the Penthouse with the SBPD already on you) — with timers, chases and a finale at the Marina Penthouse.
-- **Side work**: taxi fares, 12 hidden cash packages worth $250 each, and 10 supply crates — health, armour and ammo — that respawn after a minute.
+- **Side work**: taxi fares, 12 hidden cash packages worth $250 each, and 11 supply crates — health, armour and ammo — that respawn after a minute.
 - **Day and night**: the in-game clock drives the lighting. Golden hour from 17:30, full night from 19:00 until 06:00, with headlights and a light cone while you drive.
-- **HUD**: wanted stars, cash, health and armour, ammo, clock, speedometer, radio, objective banner and a live minimap with mission, police, fare, package and supply blips, landmark labels, a viewport rectangle, a north indicator, and three zoom levels (N or mouse wheel).
+- **HUD**: wanted stars, cash, health and armour, ammo, clock, speedometer, radio, objective banner, a difficulty pill, and a live minimap with mission, police, fare, package and supply blips, landmark labels, a viewport rectangle, a north indicator, and three zoom levels (N or mouse wheel).
 - **Feel**: synthesised WebAudio sound — engine hum, sirens that climb with your wanted level, gunshots and four radio stations — plus particles, skid feedback and a save that continues your run.
 
 ## Screenshots
 
-The four screenshots in `screenshots/` are real renders of the game itself, staged deterministically with `?shot=chase|mission|start|ledger` (see `shots.json` and `game/src/shots.js`). The `night` scene still exists in `shots.js` for the golden-hour beach shot.
+The four screenshots in `screenshots/` are real renders of the game itself, staged deterministically with `?shot=chase|mission|start|ledger` (see `shots.json` and `game/src/shots.js`). The `night` scene still exists in `shots.js` for the golden-hour beach shot, and the title shot pins `?difficulty=chill` so the difficulty selector is visible.
 
 ## Structure
 

@@ -1,7 +1,7 @@
 // The player on foot and behind the wheel: Marco "Rio" Vega, a driver new
 // to Solara Bay. Walk, sprint, steal cars, punch, shoot, get busted.
-import { PLAYER, WORLD, PICKUPS } from './config.js';
-import { clamp, angleTo } from './random.js';
+import { PLAYER, WORLD, PICKUPS, ECONOMY, difficultyTuning } from './config.js';
+import { clamp, angleTo, fmtCash } from './random.js';
 import { collideBuildings, clampToWorld, isWater } from './world.js';
 import { nearestCar, driveCar, collideCars } from './vehicles.js';
 import { knockPedDown } from './peds.js';
@@ -101,13 +101,16 @@ export function updatePlayer(game, dt) {
     tryEnterCar(game);
     tryTaxi(game);
   }
-  // Collect cash packages.
+  // Collect cash packages: the $250 base payout scales with the difficulty,
+  // and counts toward the run's earnings total in the pause menu.
   for (const pack of game.world.packages) {
     if (!pack.taken && Math.hypot(pack.x - p.x, pack.y - p.y) < 26) {
       pack.taken = true;
-      p.cash += 250;
+      const payout = Math.round(ECONOMY.packageReward * difficultyTuning(game.difficulty).rewardMul);
+      p.cash += payout;
       game.stats.packages += 1;
-      game.floater(pack.x, pack.y, '+$250 package', '#e8d44f');
+      game.stats.earned = (game.stats.earned || 0) + payout;
+      game.floater(pack.x, pack.y, '+' + fmtCash(payout) + ' package', '#e8d44f');
       game.audio.pickup();
     }
   }

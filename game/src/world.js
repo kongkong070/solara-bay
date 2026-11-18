@@ -9,6 +9,8 @@ export const KIND_PARK = 'park';
 
 // A block is the land between four roads. `park` blocks hold trees and a
 // pond instead of buildings.
+// Landmark note: the 11th supply crate sits by the North Gate, so the
+// chill-start neighbourhood has a health crate within a short walk.
 function buildBlocks(rng) {
   const blocks = [];
   const xs = WORLD.roadsX;
@@ -72,7 +74,7 @@ export const PICKUP_SPOTS = [
   [820, 420, 'health'], [2580, 820, 'armor'], [420, 1620, 'ammo'],
   [2020, 1220, 'health'], [1220, 1980, 'armor'], [2820, 1620, 'ammo'],
   [1620, 820, 'health'], [620, 2200, 'ammo'], [2420, 2200, 'health'],
-  [1000, 2440, 'armor'],
+  [1000, 2440, 'armor'], [600, 420, 'health'],
 ];
 
 function buildPickups(rng) {

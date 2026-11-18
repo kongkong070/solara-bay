@@ -1,7 +1,7 @@
 // The Solara Bay Police Department: wanted levels, interceptors that chase
 // and ram, and foot cops who arrest you. Heat fades when you stay out of
 // sight; at five stars the whole city is after you.
-import { WANTED, POLICE_TUNING } from './config.js';
+import { WANTED, POLICE_TUNING, difficultyTuning } from './config.js';
 import { clamp, angleDiff } from './random.js';
 import { makeCar, driveCar, collideCars } from './vehicles.js';
 import { collideBuildings, clampToWorld, randomRoadPoint } from './world.js';
@@ -24,7 +24,9 @@ export function raiseWanted(game, levels, crime) {
   const pol = game.police;
   pol.lastCrime = crime;
   if (pol.wanted >= 5) return;
-  pol.heat += POLICE_TUNING.heatPerCrime * levels;
+  // Heat per crime comes from the active difficulty: Chill forgives, Hardcore
+  // stacks stars fast.
+  pol.heat += difficultyTuning(game.difficulty).heatPerCrime * levels;
   if (pol.heat >= 100) {
     pol.heat = 0;
     pol.wanted = Math.min(5, pol.wanted + levels);
@@ -41,11 +43,14 @@ export function lowerWanted(game, levels) {
   if (pol.wanted === 0) game.floater(game.player.x, game.player.y - 44, 'You lost them', '#7ae08a');
 }
 
-// Spawn a police car on a road near the player, already rolling.
+// Spawn a police car on a road near the player, already rolling. Its top
+// speed scales with the difficulty: Hardcore interceptors are genuinely
+// faster, Chill ones a touch slower.
 function spawnCopCar(game) {
   const pol = game.police;
   const p = randomRoadPoint(game.rng, game.player, 520);
   const car = makeCar(game.rng, 'police', p.x, p.y, 0);
+  car.spec = Object.assign({}, car.spec, { top: car.spec.top * difficultyTuning(game.difficulty).copSpeedMul });
   car.driver = 'police';
   car.color = '#20242c';
   game.cars.push(car);
@@ -58,7 +63,7 @@ function spawnFootCop(game) {
   const a = game.rng() * Math.PI * 2;
   const cop = {
     kind: 'cop', x: game.player.x + Math.cos(a) * 320, y: game.player.y + Math.sin(a) * 320,
-    radius: 12, angle: a, speed: 175, state: 'chase', shootT: 0, shirt: '#20242c',
+    radius: 12, angle: a, speed: 175 * difficultyTuning(game.difficulty).copSpeedMul, state: 'chase', shootT: 0, shirt: '#20242c',
   };
   clampToWorld(cop, 16);
   pol.footCops.push(cop);
@@ -77,8 +82,10 @@ export function updatePolice(game, dt) {
     spawnCopCar(game);
     pol.lastSpawn = game.time;
   }
-  // Foot cops appear from level 2 up; the cap grows with the wanted level.
-  const footCap = POLICE_TUNING.footCopCap[pol.wanted] || 0;
+  // Foot cops appear from level 2 up; the cap grows with the wanted level
+  // and with the difficulty (Hardcore sends a fourth cop at five stars).
+  const tune = difficultyTuning(game.difficulty);
+  const footCap = tune.footCopCap[pol.wanted] || 0;
   if (pol.wanted >= 2 && pol.footCops.length < footCap && game.time - (pol.lastFootSpawn || 0) > 6) {
     spawnFootCop(game);
     pol.lastFootSpawn = game.time;
@@ -157,7 +164,8 @@ export function updatePolice(game, dt) {
   } else {
     pol.calmT += dt;
     pol.seenT = Math.max(0, pol.seenT - dt);
-    if (pol.calmT > POLICE_TUNING.calmSeconds && pol.wanted > 0) {
+    // Hiding cools a star off; Chill cools sooner, Hardcore makes you wait.
+    if (pol.calmT > difficultyTuning(game.difficulty).calmSeconds && pol.wanted > 0) {
       pol.calmT = 0;
       lowerWanted(game, 1);
     }

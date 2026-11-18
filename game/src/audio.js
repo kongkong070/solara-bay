@@ -115,6 +115,11 @@ export function createAudio() {
   audio.missionDone = function missionDone() {
     [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => audio.blip(f, 0.22, 'triangle', 0.16), i * 110));
   };
+  // Two-note confirm when the player picks a difficulty on the title screen.
+  audio.select = function select() {
+    audio.blip(740, 0.08, 'sine', 0.12);
+    setTimeout(() => audio.blip(988, 0.1, 'sine', 0.12), 70);
+  };
   audio.busted = function busted() {
     [392, 330, 262].forEach((f, i) => setTimeout(() => audio.blip(f, 0.3, 'sawtooth', 0.1), i * 160));
   };

@@ -46,6 +46,14 @@ createServer((request, response) => {
     response.end(body);
     return;
   }
+  // Build info for the playtest harness: which game this server serves and
+  // which difficulty modes it offers. No file involved either.
+  if (url.pathname === '/version') {
+    const body = JSON.stringify({ game: 'solara-bay', version: '0.3.0', difficulty: ['chill', 'normal', 'hardcore'] });
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) });
+    response.end(body);
+    return;
+  }
   let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);

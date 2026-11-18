@@ -1,6 +1,7 @@
 // Pedestrians: they stroll the sidewalks, cross at corners, flee gunfire
-// and panic when a car mounts the pavement. A few hail taxis.
-import { WORLD } from './config.js';
+// and panic when a car mounts the pavement. A few hail taxis. On Hardcore
+// they scatter faster when a chase rolls past; on Chill they take it slow.
+import { WORLD, difficultyTuning } from './config.js';
 import { pick, range, rangeInt } from './random.js';
 import { collideBuildings, clampToWorld, isOnRoad } from './world.js';
 
@@ -73,8 +74,10 @@ export function updatePed(game, ped, dt) {
   if (danger) {
     ped.state = 'flee';
     const a = Math.atan2(ped.y - danger.y, ped.x - danger.x);
-    ped.x += Math.cos(a) * 150 * dt;
-    ped.y += Math.sin(a) * 150 * dt;
+    // Flee speed scales with the difficulty: Hardcore crowds panic faster.
+    const fleeSpeed = 150 * difficultyTuning(game.difficulty).fleeMul;
+    ped.x += Math.cos(a) * fleeSpeed * dt;
+    ped.y += Math.sin(a) * fleeSpeed * dt;
     ped.angle = a;
     collideBuildings(game.world, ped);
     clampToWorld(ped, 14);
