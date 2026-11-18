@@ -1,285 +1,360 @@
-// Story and side work in Solara Bay. Eight story missions with Lena Cruz,
-// plus taxi fares and the hidden packages. The mission engine is a small
-// stage machine: each stage names a place or a deed, and the HUD points at it.
-// Difficulty scales the timed stages (Chill is generous, Hardcore is tight)
-// and every payout (Hardcore pays 50% more, Chill 20% less).
-import { difficultyTuning } from './config.js';
-import { fmtCash } from './random.js';
+// Story missions, taxi fares, hidden cash packages and supply crates.
+// Lena Cruz hands Rio Vega the jobs; each one pays in cash.
+import { WORLD, TUNING } from './config.js';
+import { clamp, dist } from './util.js';
 import { randomRoadPoint } from './world.js';
+import { setWanted } from './police.js';
 
-function stage(kind, x, y, text, extra) {
-  return Object.assign({ kind, x, y, r: 70, text }, extra || {});
-}
+const STORY = [
+  {
+    id: 'welcome',
+    name: 'Welcome to Solara',
+    brief: 'Lena Cruz is waiting at Neon Palms. Go and meet her.',
+    reward: 100,
+    steps: [
+      { kind: 'goto', x: 640, y: 560, r: 70, text: 'Meet Lena at Neon Palms' },
+    ],
+  },
+  {
+    id: 'wheels',
+    name: 'Wheels Up',
+    brief: 'Lena needs a fast car. Steal a Cometa GT and bring it to the garage on 5th Ave.',
+    reward: 250,
+    steps: [
+      { kind: 'inCar', type: 'sport', text: 'Steal a Cometa GT' },
+      { kind: 'inCarGoto', x: 2080, y: 1200, r: 90, text: 'Deliver the GT to the garage' },
+    ],
+  },
+  {
+    id: 'delivery',
+    name: 'Special Delivery',
+    brief: 'A package for the Docks, and the clock is ticking. Drive it there in time.',
+    reward: 300,
+    steps: [
+      { kind: 'timedGoto', x: 3160, y: 2160, r: 90, seconds: 95, text: 'Deliver the package to the Docks' },
+    ],
+  },
+  {
+    id: 'getaway',
+    name: 'The Getaway',
+    brief: 'You tripped an alarm. Lose the SBPD, then lay low at the safehouse.',
+    reward: 400,
+    steps: [
+      { kind: 'wantedAtLeast', n: 2, text: 'Get the cops on your tail' },
+      { kind: 'wantedZero', text: 'Lose the cops' },
+      { kind: 'goto', x: 1360, y: 880, r: 80, text: 'Reach the safehouse at City Hall' },
+    ],
+  },
+  {
+    id: 'harbor',
+    name: 'Harbor Heist',
+    brief: 'Three crates are sitting on the Docks. Grab them all and drop them at the pier.',
+    reward: 500,
+    steps: [
+      { kind: 'collect', count: 3, spread: 220, cx: 3160, cy: 2160, text: 'Collect the dock crates (0/3)' },
+      { kind: 'goto', x: 1720, y: 2520, r: 90, text: 'Drop the crates at Sunset Pier' },
+    ],
+  },
+  {
+    id: 'finale',
+    name: 'King of Solara',
+    brief: 'One last job: reach the Marina Penthouse and hold the block for 30 seconds.',
+    reward: 900,
+    steps: [
+      { kind: 'goto', x: 3160, y: 240, r: 90, text: 'Reach the Marina Penthouse' },
+      { kind: 'survive', seconds: 30, wanted: 3, text: 'Hold the block — survive 30 seconds' },
+    ],
+  },
+];
 
-export function buildMissions(world) {
-  const L = world.landmarks;
-  return [
-    {
-      id: 'welcome', title: 'Welcome to Solara', reward: 100,
-      brief: 'Lena Cruz runs a garage on the east side and needs a driver. Get over there and introduce yourself.',
-      stages: [stage('goto', L.garage.x, L.garage.y, "Reach Lena's Garage", { r: 90 })],
-    },
-    {
-      id: 'wheels', title: 'Wheels Up', reward: 250,
-      brief: 'Lena needs a fast car for a job tonight. Find a sports car — a Cometa GT — take it, and bring it to the garage.',
-      stages: [
-        stage('steal', 0, 0, 'Steal a sports car (Cometa GT)', { carType: 'sport' }),
-        stage('driveTo', L.garage.x, L.garage.y, 'Deliver the Cometa GT to the garage', { r: 90 }),
-      ],
-    },
-    {
-      id: 'delivery', title: 'Special Delivery', reward: 400,
-      brief: 'Three parcels, three corners of the city, one very impatient client. 150 seconds. Do not keep them waiting.',
-      stages: [
-        stage('collect', 2200, 600, 'Drop-off 1 of 3: Bay Stadium', { time: 150 }),
-        stage('collect', 600, 1800, 'Drop-off 2 of 3: South Market', {}),
-        stage('collect', 2600, 1800, 'Drop-off 3 of 3: East Docks Road', {}),
-      ],
-    },
-    {
-      id: 'getaway', title: 'The Getaway', reward: 500,
-      brief: 'Lena lifted a ledger from the wrong people. Pick her up at Solara Plaza, then lose the police and get her to the safehouse.',
-      stages: [
-        stage('goto', L.plaza.x, L.plaza.y, 'Pick up Lena at Solara Plaza', { r: 80 }),
-        stage('escape', L.safehouse.x, L.safehouse.y, 'Lose the cops — reach the Safehouse', { r: 90, wantedOnStart: 2 }),
-      ],
-    },
-    {
-      id: 'heist', title: 'Harbor Heist', reward: 800,
-      brief: 'Three loot bags sit in containers at the docks and the police already know. Grab all three, then bring them to the garage.',
-      stages: [
-        stage('collect', 2950, 2050, 'Loot bag 1 of 3: Docks North', { wantedOnStart: 3 }),
-        stage('collect', 3050, 2250, 'Loot bag 2 of 3: Docks South', {}),
-        stage('collect', 2850, 2150, 'Loot bag 3 of 3: Crane Yard', {}),
-        stage('driveTo', L.garage.x, L.garage.y, 'Deliver the loot to the garage', { r: 90 }),
-      ],
-    },
-    {
-      id: 'king', title: 'King of Solara', reward: 1200,
-      brief: 'One last run to own this city: hit every checkpoint across Solara Bay, then take the crown at the Marina Penthouse.',
-      stages: [
-        stage('collect', 600, 600, 'Checkpoint 1 of 4: North Gate', { time: 240 }),
-        stage('collect', 2600, 1000, 'Checkpoint 2 of 4: East Bridge', {}),
-        stage('collect', 1000, 2200, 'Checkpoint 3 of 4: Beach Road', {}),
-        stage('collect', 2200, 2200, 'Checkpoint 4 of 4: Stadium Loop', {}),
-        stage('driveTo', L.penthouse.x, L.penthouse.y, 'Finish at the Marina Penthouse', { r: 90 }),
-      ],
-    },
-    {
-      id: 'beach', title: 'Beach Party', reward: 600,
-      brief: 'The Neon Palms beach party needs supplies before sunset. Three crates are stashed along the sand — grab them all in 120 seconds.',
-      stages: [
-        stage('collect', 820, 2440, 'Crate 1 of 3: Palma Beach Bar', { time: 120 }),
-        stage('collect', 1480, 2440, 'Crate 2 of 3: Sunset Pier', {}),
-        stage('collect', 2200, 2440, 'Crate 3 of 3: East Sand', {}),
-      ],
-    },
-    {
-      id: 'ledger', title: 'Midnight Ledger', reward: 900,
-      brief: 'The ledger has to reach the Penthouse after dark, and the SBPD is already on you. Lose them, then slip the book to the safehouse.',
-      stages: [
-        stage('driveTo', L.penthouse.x, L.penthouse.y, 'Deliver the ledger to the Marina Penthouse', { r: 90, wantedOnStart: 3 }),
-        stage('escape', L.safehouse.x, L.safehouse.y, 'Lose the cops — reach the Safehouse', { r: 90 }),
-      ],
-    },
-  ];
-}
-
-export function makeMissions(world) {
-  return {
-    list: buildMissions(world),
-    index: 0, // next mission to start
+export function makeMissions(game) {
+  const missions = {
+    defs: STORY,
+    index: 0,
     active: null,
-    stageIndex: 0,
-    stageT: 0,
-    completed: 0,
-    failed: null,
+    done: [],
+    packages: [],
+    crates: [],
+    fare: null,
+    fareCooldown: 12,
+    earned: 0,
+    faresDone: 0,
+    packagesFound: 0,
   };
+  // Twelve hidden cash packages scattered across the city and the beach.
+  for (let i = 0; i < 12; i++) {
+    const p = randomRoadPoint(game.rng, game.world, game.player.x, game.player.y, 200);
+    missions.packages.push({ x: p.x, y: p.y, taken: false });
+  }
+  // Eight supply crates: health, armour and ammo, respawning after a minute.
+  const crateSpots = [
+    [280, 240], [1000, 560], [1720, 880], [2440, 1200],
+    [3160, 1520], [640, 1840], [2080, 2160], [1720, 2450],
+  ];
+  for (const [x, y] of crateSpots) {
+    missions.crates.push({ x, y, taken: false, respawn: 0 });
+  }
+  return missions;
 }
 
-export function startMission(game, index) {
-  const m = game.missions;
-  const def = m.list[index];
-  if (!def) return false;
-  m.active = def;
-  m.stageIndex = 0;
-  m.stageT = 0;
-  m.failed = null;
-  applyStageStart(game);
-  game.banner(def.title, def.brief, 6);
-  game.audio.blip(523, 0.15, 'triangle', 0.14);
+export function startNextMission(game) {
+  const missions = game.missions;
+  if (missions.active) return false;
+  if (missions.index >= missions.defs.length) {
+    game.addMessage('All story missions complete — Solara Bay is yours, Rio.');
+    return false;
+  }
+  const def = missions.defs[missions.index];
+  missions.active = {
+    def,
+    stepIdx: 0,
+    timer: null,
+    collected: [],
+    points: [],
+    surviveLeft: 0,
+  };
+  prepareStep(game, missions.active);
+  game.addMessage('Mission: ' + def.name + ' — ' + def.brief);
+  game.audio.select();
   return true;
 }
 
-function applyStageStart(game) {
-  const m = game.missions;
-  const st = m.active.stages[m.stageIndex];
-  if (!st) return;
-  // Timed stages stretch or shrink with the difficulty.
-  if (st.time) m.stageT = st.time * difficultyTuning(game.difficulty).missionTimeMul;
-  if (st.wantedOnStart) {
-    game.police.wanted = st.wantedOnStart;
-    game.police.heat = 0;
-    game.floater(game.player.x, game.player.y - 44, 'WANTED LEVEL ' + st.wantedOnStart, '#ff5a4a');
+function prepareStep(game, active) {
+  const step = active.def.steps[active.stepIdx];
+  if (!step) return;
+  active.timer = null;
+  if (step.kind === 'timedGoto') {
+    active.timer = step.seconds * game.diff.missionTime;
   }
-}
-
-export function currentStage(game) {
-  const m = game.missions;
-  if (!m.active) return null;
-  return m.active.stages[m.stageIndex] || null;
-}
-
-export function missionMarker(game) {
-  const st = currentStage(game);
-  if (!st) return null;
-  if (st.kind === 'steal') {
-    // Point at the nearest sports car.
-    let best = null;
-    let bestD = Infinity;
-    for (const car of game.cars) {
-      if (car.type !== 'sport' || car.dead) continue;
-      const d = Math.hypot(car.x - game.player.x, car.y - game.player.y);
-      if (d < bestD) { bestD = d; best = car; }
+  if (step.kind === 'collect') {
+    active.points = [];
+    for (let i = 0; i < step.count; i++) {
+      const a = game.rng.range(0, Math.PI * 2);
+      const d = game.rng.range(40, step.spread);
+      active.points.push({
+        x: clamp(step.cx + Math.cos(a) * d, 60, WORLD.width - 60),
+        y: clamp(step.cy + Math.sin(a) * d, 60, WORLD.beachTop - 40),
+        taken: false,
+      });
     }
-    return best ? { x: best.x, y: best.y, label: 'Cometa GT' } : null;
+    active.collected = [];
   }
-  return { x: st.x, y: st.y, label: st.text };
+  if (step.kind === 'survive') {
+    active.surviveLeft = step.seconds;
+    setWanted(game, step.wanted || 2);
+  }
+  if (step.kind === 'wantedAtLeast') {
+    setWanted(game, step.n);
+  }
 }
 
-function completeStage(game) {
-  const m = game.missions;
-  m.stageIndex += 1;
-  game.audio.pickup();
-  if (m.stageIndex >= m.active.stages.length) completeMission(game);
-  else applyStageStart(game);
+function stepText(active) {
+  const step = active.def.steps[active.stepIdx];
+  if (!step) return '';
+  if (step.kind === 'collect') {
+    return step.text.replace('(0/3)', '(' + active.collected.length + '/' + step.count + ')');
+  }
+  return step.text;
+}
+
+export function currentObjective(game) {
+  const missions = game.missions;
+  if (missions.active) {
+    const active = missions.active;
+    const step = active.def.steps[active.stepIdx];
+    if (!step) return null;
+    if (step.kind === 'goto' || step.kind === 'timedGoto' || step.kind === 'inCarGoto') {
+      return { x: step.x, y: step.y, text: stepText(active) };
+    }
+    if (step.kind === 'collect') {
+      const next = active.points.find((p) => !p.taken);
+      if (next) return { x: next.x, y: next.y, text: stepText(active) };
+    }
+    if (step.kind === 'inCar') {
+      // Point at the nearest sports car.
+      let best = null;
+      let bestD = Infinity;
+      for (const car of game.cars) {
+        if (car.type !== step.type || car.dead) continue;
+        const d = dist(car.x, car.y, game.player.x, game.player.y);
+        if (d < bestD) { bestD = d; best = car; }
+      }
+      if (best) return { x: best.x, y: best.y, text: stepText(active) };
+    }
+    return { x: game.player.x, y: game.player.y, text: stepText(active) };
+  }
+  if (missions.fare) {
+    const fare = missions.fare;
+    if (fare.phase === 'pickup') return { x: fare.ped.x, y: fare.ped.y, text: 'Pick up the fare' };
+    return { x: fare.destX, y: fare.destY, text: 'Drop the fare off' };
+  }
+  return null;
 }
 
 function completeMission(game) {
-  const m = game.missions;
-  const def = m.active;
-  // The payout scales with the difficulty, and the run's earnings total
-  // feeds the pause menu's statistics.
-  const reward = Math.round(def.reward * difficultyTuning(game.difficulty).rewardMul);
-  game.player.cash += reward;
-  game.stats.earned = (game.stats.earned || 0) + reward;
-  m.completed += 1;
-  m.index = Math.max(m.index, m.completed);
-  game.banner('Mission complete: ' + def.title, 'Paid ' + fmtCash(reward) + ' — ' + m.completed + ' of ' + m.list.length + ' missions done.', 5);
-  game.floater(game.player.x, game.player.y - 50, '+' + fmtCash(reward), '#7ae08a');
-  game.audio.missionDone();
-  game.saveGame();
-  if (m.completed >= m.list.length) {
-    game.storyComplete = true;
-    game.state = 'complete';
-  }
-  m.active = null;
+  const missions = game.missions;
+  const active = missions.active;
+  const payout = Math.round(active.def.reward * game.diff.payout);
+  game.player.cash += payout;
+  missions.earned += payout;
+  missions.done.push(active.def.id);
+  missions.index += 1;
+  missions.active = null;
+  game.addMessage('Mission complete: ' + active.def.name + ' (+$' + payout + ')');
+  game.audio.cash();
+  game.save();
 }
 
 function failMission(game, reason) {
-  const m = game.missions;
-  m.failed = { title: m.active.title, reason };
-  game.banner('Mission failed: ' + m.active.title, reason + ' — press M to try again.', 5);
-  game.audio.busted();
-  m.active = null;
+  const missions = game.missions;
+  const active = missions.active;
+  missions.active = null;
+  game.addMessage('Mission failed: ' + active.def.name + ' — ' + reason);
 }
 
 export function updateMissions(game, dt) {
-  const m = game.missions;
-  if (!m.active) return;
-  const st = currentStage(game);
-  if (!st) return;
-  const p = game.player;
-  if (st.time) {
-    m.stageT -= dt;
-    if (m.stageT <= 0) {
-      failMission(game, 'Out of time');
-      return;
+  const missions = game.missions;
+  const player = game.player;
+
+  if (missions.active) {
+    const active = missions.active;
+    const step = active.def.steps[active.stepIdx];
+    if (active.timer !== null) {
+      active.timer -= dt;
+      if (active.timer <= 0) {
+        failMission(game, 'out of time');
+        return;
+      }
+    }
+    let done = false;
+    if (step.kind === 'goto' || step.kind === 'timedGoto' || step.kind === 'inCarGoto') {
+      if (step.kind === 'inCarGoto' && !player.inCar) {
+        // Must arrive in a car; on foot does not count.
+      } else if (dist(player.x, player.y, step.x, step.y) < step.r) {
+        done = true;
+      }
+    } else if (step.kind === 'inCar') {
+      if (player.inCar && player.inCar.type === step.type) done = true;
+    } else if (step.kind === 'collect') {
+      for (const p of active.points) {
+        if (!p.taken && dist(player.x, player.y, p.x, p.y) < 42) {
+          p.taken = true;
+          active.collected.push(p);
+          game.audio.chime();
+        }
+      }
+      if (active.collected.length >= step.count) done = true;
+    } else if (step.kind === 'wantedAtLeast') {
+      if (game.police.wanted >= step.n) done = true;
+    } else if (step.kind === 'wantedZero') {
+      if (game.police.wanted === 0) done = true;
+    } else if (step.kind === 'survive') {
+      active.surviveLeft -= dt;
+      if (active.surviveLeft <= 0) done = true;
+    }
+    if (done) {
+      active.stepIdx += 1;
+      if (active.stepIdx >= active.def.steps.length) {
+        completeMission(game);
+      } else {
+        prepareStep(game, active);
+        game.addMessage('Next: ' + stepText(active));
+      }
     }
   }
-  const d = Math.hypot(p.x - st.x, p.y - st.y);
-  switch (st.kind) {
-    case 'goto':
-      if (d < st.r) completeStage(game);
-      break;
-    case 'driveTo':
-      if (p.inCar && d < st.r) completeStage(game);
-      break;
-    case 'collect':
-      if (d < st.r) completeStage(game);
-      break;
-    case 'steal':
-      if (p.inCar && p.inCar.type === st.carType) completeStage(game);
-      break;
-    case 'escape':
-      if (d < st.r) {
-        // Only counts once the heat is down to one star.
-        if (game.police.wanted <= 1) completeStage(game);
-      }
-      break;
-    default:
-      break;
+
+  // Cash packages.
+  for (const pkg of missions.packages) {
+    if (!pkg.taken && dist(player.x, player.y, pkg.x, pkg.y) < 34) {
+      pkg.taken = true;
+      missions.packagesFound += 1;
+      player.cash += TUNING.packageValue;
+      missions.earned += TUNING.packageValue;
+      game.addMessage('Hidden package found! +$' + TUNING.packageValue);
+      game.audio.cash();
+      game.save();
+    }
   }
+
+  // Supply crates.
+  for (const crate of missions.crates) {
+    if (crate.taken) {
+      crate.respawn -= dt;
+      if (crate.respawn <= 0) crate.taken = false;
+      continue;
+    }
+    if (dist(player.x, player.y, crate.x, crate.y) < 36) {
+      crate.taken = true;
+      crate.respawn = 60;
+      player.health = Math.min(TUNING.playerHealth, player.health + 40);
+      player.armor = Math.min(TUNING.playerArmor, player.armor + 25);
+      player.ammo += 24;
+      game.addMessage('Supply crate: +health, +armour, +ammo');
+      game.audio.chime();
+    }
+  }
+
+  updateFare(game, dt);
 }
 
-// ---- Taxi side jobs ----
-export function makeTaxi() {
-  return { active: false, ped: null, target: null, timer: 0, fare: 0, waitT: 0 };
-}
-
-export function taxiStart(game, ped) {
-  const taxi = game.taxi;
-  const tune = difficultyTuning(game.difficulty);
-  const dest = randomRoadPoint(game.rng, game.player, 700);
-  taxi.active = true;
-  taxi.ped = ped;
-  taxi.target = dest;
-  // The fare clock is kinder on Chill, tighter on Hardcore; the fare itself
-  // scales with the difficulty payout like mission rewards do.
-  taxi.timer = tune.taxiSeconds;
-  taxi.fare = Math.round((45 + Math.round(Math.hypot(dest.x - game.player.x, dest.y - game.player.y) * 0.08)) * tune.rewardMul);
-  taxi.waitT = 0;
-  ped.state = 'taxi';
-  game.banner('Taxi fare', 'Get your passenger to the marker — ' + fmtCash(taxi.fare) + ' if you make it in time.', 4);
-  game.audio.blip(660, 0.12, 'sine', 0.12);
-}
-
-export function updateTaxi(game, dt) {
-  const taxi = game.taxi;
-  if (!taxi.active) return;
-  const p = game.player;
-  taxi.timer -= dt;
-  if (taxi.timer <= 0) {
-    taxiCancel(game, 'Fare expired — the passenger walked away.');
+// Taxi fares: a pedestrian who wants a cab flags you down; drive them
+// to their destination before the meter runs out.
+function updateFare(game, dt) {
+  const missions = game.missions;
+  const player = game.player;
+  if (!missions.fare) {
+    missions.fareCooldown -= dt;
+    if (missions.fareCooldown <= 0) {
+      missions.fareCooldown = 18;
+      tryStartFare(game);
+    }
     return;
   }
-  if (p.inCar) {
-    // The passenger rides with you.
-    taxi.ped.x = p.x;
-    taxi.ped.y = p.y;
-    taxi.ped.state = 'taxi';
-    const d = Math.hypot(p.x - taxi.target.x, p.y - taxi.target.y);
-    if (d < 70) {
-      p.cash += taxi.fare;
-      game.stats.earned = (game.stats.earned || 0) + taxi.fare;
-      game.floater(taxi.target.x, taxi.target.y - 30, '+' + fmtCash(taxi.fare), '#7ae08a');
-      game.audio.missionDone();
-      game.stats.fares += 1;
-      taxi.active = false;
-      taxi.ped.state = 'walk';
-      taxi.ped.taxi = false;
-      game.saveGame();
+  const fare = missions.fare;
+  fare.timer -= dt;
+  if (fare.timer <= 0) {
+    game.addMessage('Fare cancelled — too slow.');
+    if (fare.ped) fare.ped.wantsTaxi = true;
+    missions.fare = null;
+    return;
+  }
+  if (fare.phase === 'pickup') {
+    if (dist(player.x, player.y, fare.ped.x, fare.ped.y) < 46) {
+      fare.phase = 'dropoff';
+      fare.ped.wantsTaxi = false;
+      fare.ped.state = 'walk';
+      game.addMessage('Passenger aboard — take them to the marker.');
     }
-  } else {
-    taxi.waitT += dt;
-    if (taxi.waitT > 25) taxiCancel(game, 'You left your passenger waiting too long.');
+  } else if (dist(player.x, player.y, fare.destX, fare.destY) < 70) {
+    const pay = Math.round(fare.reward * game.diff.payout);
+    player.cash += pay;
+    missions.earned += pay;
+    missions.faresDone += 1;
+    game.addMessage('Fare complete! +$' + pay);
+    game.audio.cash();
+    missions.fare = null;
+    game.save();
   }
 }
 
-function taxiCancel(game, reason) {
-  const taxi = game.taxi;
-  if (taxi.ped) taxi.ped.state = 'walk';
-  taxi.active = false;
-  taxi.ped = null;
-  game.banner('Fare lost', reason, 3.5);
+function tryStartFare(game) {
+  // Find a waving pedestrian near the player.
+  let best = null;
+  let bestD = 420;
+  for (const ped of game.peds) {
+    if (!ped.wantsTaxi || ped.state === 'down') continue;
+    const d = dist(ped.x, ped.y, game.player.x, game.player.y);
+    if (d < bestD) { bestD = d; best = ped; }
+  }
+  if (!best) return;
+  const dest = randomRoadPoint(game.rng, game.world, game.player.x, game.player.y, 500);
+  game.missions.fare = {
+    ped: best,
+    destX: dest.x,
+    destY: dest.y,
+    phase: 'pickup',
+    timer: game.diff.taxiSeconds,
+    reward: 45 + Math.round(bestD / 12),
+  };
+  game.addMessage('A fare is waving nearby — pick them up!');
 }

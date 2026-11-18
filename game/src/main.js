@@ -1,252 +1,136 @@
-// Solara Bay — entry point. Builds the game state, runs the loop, wires
-// every system together and serves the deterministic screenshot scenes.
-import { WORLD, VIEW, DAY, LIGHTING, DIFFICULTY_ORDER, difficultyTuning } from './config.js';
-import { makeRng, clamp } from './random.js';
-import { createWorld, collideBuildings, clampToWorld, updatePickups } from './world.js';
-import { createInput, keyDown, clearPressed } from './input.js';
+// Solara Bay boot and game loop: builds the world, wires every system,
+// and runs the frame loop. Exposes the game as window.__game so the
+// playtest and the shot tool can drive it.
+import { WORLD, DIFFICULTIES, CLOCK, TUNING } from './config.js';
+import { makeRng, clamp } from './util.js';
+import { buildWorld } from './world.js';
+import { createInput } from './input.js';
 import { createAudio } from './audio.js';
-import { makePlayer, updatePlayer, hurtPlayer } from './player.js';
+import { makePlayer, updatePlayer, updateBullets } from './player.js';
 import { spawnTraffic, spawnParked, updateTraffic } from './vehicles.js';
-import { spawnPeds, updatePed } from './peds.js';
-import { makePolice, raiseWanted, updatePolice, clearPolice } from './police.js';
-import { makeMissions, startMission, updateMissions, makeTaxi, updateTaxi } from './missions.js';
-import { readSave, writeSave, applySave, saveSummaryText } from './save.js';
-import {
-  createCamera, drawWorld, drawCars, drawPeds, drawPlayer, drawBullets,
-  drawParticles, drawMarker, drawHUD, drawTitle, drawPause, drawEnd, drawSunsetGrade,
-  drawNightGrade,
-} from './render.js';
-import { stageShot } from './shots.js';
+import { spawnPeds, updatePeds } from './peds.js';
+import { makePolice, updatePolice } from './police.js';
+import { makeMissions, startNextMission, updateMissions } from './missions.js';
+import { render } from './render.js';
+import { saveGame, loadGame, applySave } from './save.js';
+import { stageShot, shotSeed } from './shots.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-canvas.width = VIEW.width;
-canvas.height = VIEW.height;
 
-export function createGame() {
+function newGame() {
+  const params = new URLSearchParams(window.location.search);
+  const seed = params.has('seed') || params.has('shot')
+    ? shotSeed()
+    : Math.floor(Math.random() * 100000);
   const game = {
-    canvas, ctx,
-    input: createInput(canvas),
-    audio: createAudio(),
-    camera: createCamera(),
-    state: 'title', // title | play | pause | busted | wasted | complete
+    state: 'title',
     time: 0,
-    clockMinutes: DAY.startMinutes,
-    lighting: 'day',
-    seed: 20261118,
-    rng: makeRng(20261118),
-    world: null,
-    player: null,
-    cars: [],
-    peds: [],
-    bullets: [],
+    timePlayed: 0,
+    clockMinutes: CLOCK.startMinutes,
+    rng: makeRng(seed),
+    view: { w: canvas.width, h: canvas.height },
+    ctx,
+    camera: { x: 1720, y: 1200 },
+    mapZoom: 1,
+    difficultyKey: 'normal',
+    difficulties: DIFFICULTIES,
+    diff: DIFFICULTIES.normal,
+    messages: [],
     particles: [],
-    floaters: [],
-    missions: null,
-    taxi: makeTaxi(),
-    police: makePolice(),
-    danger: null,
-    mouseWorld: { x: 0, y: 0 },
-    bannerText: null,
-    bannerT: 0,
-    storyComplete: false,
-    minimapZoom: 1, // 0 small, 1 normal, 2 large: N key or mouse wheel
-    difficulty: 'normal', // chill | normal | hardcore, picked on the title screen (1/2/3)
-    stats: { fares: 0, packages: 0, stolen: 0, bestWanted: 0, pickups: 0, earned: 0 },
-    saveExists: false,
-    saveSummary: '',
-    edge(name) {
-      if (game.input.pressed.has(name)) {
-        game.input.pressed.delete(name);
-        return true;
-      }
-      return false;
-    },
-    banner(title, sub, secs) {
-      game.bannerText = { title, sub: sub || '' };
-      game.bannerT = secs || 4;
-    },
-    floater(x, y, text, color) {
-      game.floaters.push({ x, y, text, color: color || '#fff', life: 1.6 });
-    },
-    addParticles(x, y, n, color) {
-      for (let i = 0; i < n; i += 1) {
-        const a = game.rng() * Math.PI * 2;
-        const sp = 40 + game.rng() * 120;
-        game.particles.push({
-          x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-          life: 0.5 + game.rng() * 0.5, max: 1, size: 2 + game.rng() * 3, color,
-        });
-      }
-    },
-    raiseWanted(levels, crime) { raiseWanted(game, levels, crime); },
-    saveGame() { writeSave(game); },
-    endRun(kind) { endRun(game, kind); },
+    bullets: [],
+    recentShot: null,
+    bustedReason: '',
+    saveData: null,
   };
-  game.reset = (seed) => resetGame(game, seed || 20261118);
-  game.update = (dt) => updateGame(game, dt);
-  game.render = () => renderGame(game);
-  game.startGame = (useSave) => startGame(game, useSave);
-  game.reset(game.seed);
-  const save = readSave();
-  if (save) {
-    game.saveExists = true;
-    game.saveSummary = saveSummaryText(save);
-    game.pendingSave = save;
+  game.input = createInput(canvas);
+  game.audio = createAudio();
+  game.world = buildWorld(game.rng);
+  game.player = makePlayer(1720, 1200, DIFFICULTIES.normal.startCash);
+  game.police = makePolice();
+  game.missions = makeMissions(game);
+  game.cars = [];
+  game.peds = [];
+  game.saveData = loadGame();
+  if (game.saveData && game.saveData.difficulty && DIFFICULTIES[game.saveData.difficulty]) {
+    game.difficultyKey = game.saveData.difficulty;
+    game.diff = DIFFICULTIES[game.difficultyKey];
   }
+  game.player.cash = game.diff.startCash;
+  applySave(game, game.saveData);
+
+  game.addMessage = function addMessage(text) {
+    game.messages.push({ text, ttl: 5 });
+    if (game.messages.length > 4) game.messages.shift();
+  };
+  game.addParticles = function addParticles(x, y, n, color) {
+    for (let i = 0; i < n; i++) {
+      const a = game.rng.range(0, Math.PI * 2);
+      const sp = game.rng.range(40, 180);
+      game.particles.push({
+        x, y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life: game.rng.range(0.3, 0.7),
+        maxLife: 0.7,
+        color,
+        size: game.rng.range(2, 5),
+      });
+    }
+  };
+  game.save = function save() {
+    saveGame(game);
+  };
+  game.setDifficulty = function setDifficulty(key) {
+    if (!DIFFICULTIES[key]) return;
+    game.difficultyKey = key;
+    game.diff = DIFFICULTIES[key];
+    game.player.cash = game.diff.startCash;
+  };
+  game.startMission = function startMission() {
+    return startNextMission(game);
+  };
+
+  spawnTraffic(game, 14);
+  spawnParked(game, 9);
+  spawnPeds(game, 26);
   return game;
 }
 
-function resetGame(game, seed) {
-  game.seed = seed;
-  game.rng = makeRng(seed + 7);
-  game.world = createWorld(seed);
-  game.player = makePlayer(1000, 1000);
-  game.cars = [];
-  game.peds = [];
-  game.bullets = [];
-  game.particles = [];
-  game.floaters = [];
-  game.missions = makeMissions(game.world);
-  game.taxi = makeTaxi();
-  game.police = makePolice();
-  game.danger = null;
-  game.time = 0;
-  game.clockMinutes = DAY.startMinutes;
-  game.lighting = 'day';
-  game.bannerText = null;
-  game.bannerT = 0;
-  game.storyComplete = false;
-  game.minimapZoom = 1;
-  game.stats = { fares: 0, packages: 0, stolen: 0, bestWanted: 0, pickups: 0, earned: 0 };
-  // Starting cash follows the difficulty: Chill starts rich, Hardcore broke.
-  game.player.cash = difficultyTuning(game.difficulty).startCash;
-  spawnTraffic(game, 14);
-  spawnParked(game, 12);
-  spawnPeds(game, 64);
-  game.camera.x = game.player.x;
-  game.camera.y = game.player.y;
+const game = newGame();
+window.__game = game;
+
+// Keep traffic and pedestrians topped up near the player.
+function upkeep(game, dt) {
+  game.upkeepTimer = (game.upkeepTimer || 0) - dt;
+  if (game.upkeepTimer > 0) return;
+  game.upkeepTimer = 2;
+  const near = (e) => Math.hypot(e.x - game.player.x, e.y - game.player.y) < 1300;
+  game.cars = game.cars.filter((c) => !c.dead && (c.driver === 'player' || near(c) || c.driver === 'police'));
+  game.peds = game.peds.filter((p) => p.state !== 'down' || near(p));
+  const traffic = game.cars.filter((c) => c.driver === 'traffic').length;
+  const parked = game.cars.filter((c) => c.driver === null).length;
+  if (traffic < 12) spawnTraffic(game, 12 - traffic);
+  if (parked < 7) spawnParked(game, 7 - parked);
+  if (game.peds.length < 22) spawnPeds(game, 22 - game.peds.length);
 }
 
-function startGame(game, useSave) {
-  game.reset(game.seed);
-  if (useSave && game.pendingSave) applySave(game, game.pendingSave);
-  game.state = 'play';
-  clearPressed(game.input);
-  game.audio.ensure();
-  game.banner('Solara Bay', 'Find Lena at the garage — press M to start your first mission.', 5);
-}
-
-// Pick a difficulty on the title screen. The choice sticks for the run
-// (and, through the save, for the next one) until the player picks another.
-function setDifficulty(game, name) {
-  if (game.difficulty === name) return;
-  game.difficulty = name;
-  game.audio.select();
-}
-
-function endRun(game, kind) {
-  if (game.state !== 'play') return;
-  const p = game.player;
-  const fine = kind === 'busted' ? 120 : 150;
-  p.cash = Math.max(0, p.cash - fine);
-  if (game.missions.active) {
-    game.missions.failed = { title: game.missions.active.title, reason: kind === 'busted' ? 'Busted' : 'Wasted' };
-    game.missions.active = null;
-  }
-  clearPolice(game);
-  p.health = 100;
-  p.armor = 0;
-  p.ammo = 12;
-  p.reserveAmmo = 48;
-  if (p.inCar) { p.inCar.driver = null; p.inCar = null; }
-  p.x = game.world.landmarks.garage.x;
-  p.y = game.world.landmarks.garage.y + 40;
-  game.audio.busted();
-  game.audio.setEngine(0, false);
-  game.saveGame();
-  game.state = kind;
-}
-
-function updateGame(game, dt) {
-  game.time += dt;
-  // The city lives even behind the title screen.
-  for (const car of game.cars) {
-    if (car.dead) continue;
-    if (car.driver === 'traffic') updateTraffic(car, dt, game);
-  }
-  for (const ped of game.peds) updatePed(game, ped, dt);
-  if (game.state !== 'play') return;
-  game.clockMinutes += dt * DAY.minutesPerSecond;
-  // Day/night cycle: the clock drives the lighting — day, golden hour,
-  // then night with headlights after 19:00 until dawn at 06:00.
-  const mins = game.clockMinutes % (24 * 60);
-  game.lighting = mins >= LIGHTING.nightStart || mins < LIGHTING.nightEnd ? 'night'
-    : mins >= LIGHTING.sunsetStart ? 'sunset' : 'day';
-  updatePickups(game.world, dt);
-  // Mouse position in world space (for aiming). input.mouse is already in
-  // canvas pixels, so only the camera offset applies.
-  game.mouseWorld.x = game.camera.x - VIEW.width / 2 + game.input.mouse.x;
-  game.mouseWorld.y = game.camera.y - VIEW.height / 2 + game.input.mouse.y;
+function updatePlaying(game, dt) {
+  game.timePlayed += dt;
+  game.clockMinutes += CLOCK.minutesPerSecond * dt;
+  if (game.clockMinutes >= 1440) game.clockMinutes -= 1440;
   updatePlayer(game, dt);
+  updateBullets(game, dt);
+  for (const car of game.cars) {
+    if (car.driver === 'traffic' && !car.dead) {
+      // Traffic brains live in vehicles.js; call through the game.
+      updateTrafficCar(game, car, dt);
+    }
+  }
+  updatePeds(game, dt);
   updatePolice(game, dt);
   updateMissions(game, dt);
-  updateTaxi(game, dt);
-  game.stats.stolen = game.cars.filter((c) => c.stolen).length;
-  game.stats.bestWanted = Math.max(game.stats.bestWanted, game.police.wanted);
-  // Bullets fly, hit things, and die on walls.
-  for (const b of game.bullets) {
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
-    b.life -= dt;
-    if (collideBuildings(game.world, { x: b.x, y: b.y, radius: 2 })) b.life = 0;
-  }
-  game.bullets = game.bullets.filter((b) => {
-    if (b.life <= 0) return false;
-    if (b.from === 'player') {
-      for (const ped of game.peds) {
-        if (!ped.dead && ped.state !== 'down' && Math.hypot(ped.x - b.x, ped.y - b.y) < 14) {
-          ped.state = 'down';
-          ped.stateT = 8;
-          game.raiseWanted(1, 'shooting');
-          game.addParticles(ped.x, ped.y, 6, '#c94f4f');
-          return false;
-        }
-      }
-      for (const car of game.cars) {
-        if (!car.dead && Math.hypot(car.x - b.x, car.y - b.y) < 26) {
-          car.health -= 9;
-          game.addParticles(b.x, b.y, 4, '#ffd76a');
-          if (car.health <= 0 && !car.dead) {
-            car.dead = true;
-            game.addParticles(car.x, car.y, 24, '#ff8a3a');
-            if (car.driver === 'police') game.raiseWanted(1, 'cop-down');
-          }
-          return false;
-        }
-      }
-      for (const cop of game.police.footCops) {
-        if (Math.hypot(cop.x - b.x, cop.y - b.y) < 14) {
-          game.police.footCops.splice(game.police.footCops.indexOf(cop), 1);
-          game.raiseWanted(1, 'cop-down');
-          game.addParticles(cop.x, cop.y, 8, '#c94f4f');
-          return false;
-        }
-      }
-    } else if (b.from === 'police') {
-      const p = game.player;
-      if (!p.inCar && Math.hypot(p.x - b.x, p.y - b.y) < 14) {
-        hurtPlayer(game, 7, 'police');
-        return false;
-      }
-      if (p.inCar && Math.hypot(p.inCar.x - b.x, p.inCar.y - b.y) < 26) {
-        p.inCar.health -= 4;
-        return false;
-      }
-    }
-    return true;
-  });
-  // Particles and floating text fade.
+  // Particles.
   for (const pt of game.particles) {
     pt.x += pt.vx * dt;
     pt.y += pt.vy * dt;
@@ -255,111 +139,90 @@ function updateGame(game, dt) {
     pt.life -= dt;
   }
   game.particles = game.particles.filter((pt) => pt.life > 0);
-  for (const f of game.floaters) {
-    f.y -= 26 * dt;
-    f.life -= dt;
+  // Messages fade.
+  for (const m of game.messages) m.ttl -= dt;
+  game.messages = game.messages.filter((m) => m.ttl > 0);
+  // Camera follows the player.
+  const cam = game.camera;
+  cam.x += (game.player.x - cam.x) * Math.min(1, 5 * dt);
+  cam.y += (game.player.y - cam.y) * Math.min(1, 5 * dt);
+  cam.x = clamp(cam.x, game.view.w / 2 - 200, WORLD.width - game.view.w / 2 + 200);
+  cam.y = clamp(cam.y, game.view.h / 2 - 200, WORLD.height - game.view.h / 2 + 200);
+  // Minimap zoom: N cycles, the wheel steps.
+  if (game.input.wasPressed('KeyN')) {
+    game.mapZoom = (game.mapZoom + 1) % 3;
   }
-  game.floaters = game.floaters.filter((f) => f.life > 0);
-  if (game.danger) {
-    game.danger.t -= dt;
-    if (game.danger.t <= 0) game.danger = null;
+  const wheel = game.input.takeWheel();
+  if (wheel !== 0) {
+    game.mapZoom = clamp(game.mapZoom + (wheel > 0 ? -1 : 1), 0, 2);
   }
-  if (game.bannerT > 0) {
-    game.bannerT -= dt;
-    if (game.bannerT <= 0) game.bannerText = null;
+  // Mission key, pause, mute.
+  if (game.input.wasPressed('KeyM')) game.startMission();
+  if (game.input.wasPressed('KeyP') || game.input.wasPressed('Escape')) {
+    game.state = 'paused';
   }
-  // Camera follows the player, clamped to the world.
-  const p = game.player;
-  const tx = clamp(p.x, VIEW.width / 2 - 40, WORLD.width - VIEW.width / 2 + 40);
-  const ty = clamp(p.y, VIEW.height / 2 - 40, WORLD.height - VIEW.height / 2 + 40);
-  game.camera.x += (tx - game.camera.x) * Math.min(1, 5 * dt);
-  game.camera.y += (ty - game.camera.y) * Math.min(1, 5 * dt);
-  // Global keys.
-  if (game.edge('p') || game.edge('Escape')) {
-    game.state = 'pause';
-    clearPressed(game.input);
-    game.audio.setEngine(0, false);
+  if (game.input.wasPressed('KeyQ')) {
+    game.audio.toggleMute();
   }
-  if (game.edge('q')) game.audio.toggleMute();
-  if (game.edge('n')) game.minimapZoom = (game.minimapZoom + 1) % 3;
-  if (game.input.wheelY !== 0) {
-    // Wheel up zooms the minimap in, wheel down zooms it out.
-    const steps = game.input.wheelY > 0 ? -1 : 1;
-    game.minimapZoom = clamp(game.minimapZoom + steps, 0, 2);
-    game.input.wheelY = 0;
+  upkeep(game, dt);
+  game.audio.setEngine(
+    game.player.inCar ? Math.abs(game.player.inCar.speed) / (TUNING.carMaxSpeed * 1.3) : 0,
+    !!game.player.inCar,
+  );
+  game.audio.setSiren(game.police.wanted);
+  game.audio.update(dt);
+}
+
+// Traffic update lives here so main.js owns the frame order.
+function updateTrafficCar(game, car, dt) {
+  updateTraffic(car, dt, game);
+}
+
+// Title screen keys: 1/2/3 pick a difficulty, Enter starts the game.
+function updateTitle(game) {
+  const input = game.input;
+  if (input.wasPressed('Digit1')) game.setDifficulty('chill');
+  if (input.wasPressed('Digit2')) game.setDifficulty('normal');
+  if (input.wasPressed('Digit3')) game.setDifficulty('hardcore');
+  if (input.wasPressed('Enter')) {
+    game.audio.ensure();
+    game.audio.select();
+    game.state = 'playing';
+    game.addMessage('Welcome to Solara Bay. Press M for your first mission.');
+    game.save();
   }
-  if (game.edge('m') && !game.missions.active && game.missions.index < game.missions.list.length) {
-    startMission(game, game.missions.index);
+  if (input.wasPressed('KeyQ')) game.audio.toggleMute();
+}
+
+// The busted screen waits for Enter, then play resumes from the hospital.
+function updateBusted(game) {
+  if (game.input.wasPressed('Enter')) {
+    game.state = 'playing';
+    game.audio.select();
   }
 }
 
-function renderGame(game) {
-  const ctx2 = game.ctx;
-  ctx2.setTransform(1, 0, 0, 1, 0, 0);
-  ctx2.fillStyle = '#1d5f86';
-  ctx2.fillRect(0, 0, VIEW.width, VIEW.height);
-  ctx2.save();
-  ctx2.translate(VIEW.width / 2 - game.camera.x, VIEW.height / 2 - game.camera.y);
-  drawWorld(ctx2, game);
-  drawMarker(ctx2, game);
-  drawCars(ctx2, game);
-  drawPeds(ctx2, game);
-  drawPlayer(ctx2, game);
-  drawBullets(ctx2, game);
-  drawParticles(ctx2, game);
-  ctx2.restore();
-  if (game.lighting === 'sunset') drawSunsetGrade(ctx2);
-  else if (game.lighting === 'night') drawNightGrade(ctx2, game);
-  if (game.state === 'title') drawTitle(ctx2, game);
-  else if (game.state === 'pause') { drawHUD(ctx2, game); drawPause(ctx2, game); }
-  else if (game.state === 'busted' || game.state === 'wasted' || game.state === 'complete') {
-    drawHUD(ctx2, game);
-    drawEnd(ctx2, game, game.state);
-  } else drawHUD(ctx2, game);
-}
-
-// ---- Boot ----
-const game = createGame();
-window.__game = game;
-
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-if (shot) {
-  stageShot(shot, game, params.get('difficulty'));
-  game.render();
-  window.__shotReady = true;
-} else {
-  let last = performance.now();
-  function frame(now) {
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-    if (game.state === 'title') {
-      if (game.edge('Enter') || game.input.mouse.clicked) startGame(game, false);
-      else if (game.edge('c') && game.saveExists) startGame(game, true);
-      // Difficulty pick: 1 Chill, 2 Normal, 3 Hardcore. The buffered press
-      // is cleared on start, so a difficulty key never leaks into play.
-      else if (game.edge('1')) setDifficulty(game, DIFFICULTY_ORDER[0]);
-      else if (game.edge('2')) setDifficulty(game, DIFFICULTY_ORDER[1]);
-      else if (game.edge('3')) setDifficulty(game, DIFFICULTY_ORDER[2]);
-      game.update(dt);
-    } else if (game.state === 'pause') {
-      if (game.edge('p') || game.edge('Escape')) { game.state = 'play'; clearPressed(game.input); }
-      else if (game.edge('r')) startGame(game, false);
-      else if (game.edge('m') && !game.missions.active && game.missions.index < game.missions.list.length) {
-        game.state = 'play';
-        startMission(game, game.missions.index);
-      }
-    } else if (game.state === 'busted' || game.state === 'wasted' || game.state === 'complete') {
-      if (game.edge('Enter')) { game.state = 'play'; game.banner('Free roam', 'Missions, fares and packages are still out there.', 4); }
-      else if (game.edge('r')) startGame(game, false);
-    } else {
-      game.update(dt);
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  last = now;
+  game.time += dt;
+  if (game.state === 'title') {
+    updateTitle(game);
+  } else if (game.state === 'playing') {
+    updatePlaying(game, dt);
+  } else if (game.state === 'paused') {
+    if (game.input.wasPressed('KeyP') || game.input.wasPressed('Escape') || game.input.wasPressed('Enter')) {
+      game.state = 'playing';
     }
-    game.input.mouse.clicked = false;
-    game.render();
-    requestAnimationFrame(frame);
+  } else if (game.state === 'busted') {
+    updateBusted(game);
   }
+  render(game);
+  game.input.clearEdges();
   requestAnimationFrame(frame);
-  canvas.addEventListener('mousedown', () => game.audio.ensure(), { once: true });
-  window.addEventListener('keydown', () => game.audio.ensure(), { once: true });
 }
+
+// Stage a deterministic screenshot scene when the URL asks for one.
+stageShot(game);
+requestAnimationFrame(frame);

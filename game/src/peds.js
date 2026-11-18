@@ -1,105 +1,122 @@
-// Pedestrians: they stroll the sidewalks, cross at corners, flee gunfire
-// and panic when a car mounts the pavement. A few hail taxis. On Hardcore
-// they scatter faster when a chase rolls past; on Chill they take it slow.
-import { WORLD, difficultyTuning } from './config.js';
-import { pick, range, rangeInt } from './random.js';
-import { collideBuildings, clampToWorld, isOnRoad } from './world.js';
+// Pedestrians: they stroll the sidewalks, flee from gunfire and police
+// chases, and a few of them want a taxi.
+import { WORLD } from './config.js';
+import { clamp, dist } from './util.js';
+import { hitsBuilding, clampToWorld, insideWorld } from './world.js';
 
-const SHIRTS = ['#e07a3a', '#3a6fd8', '#4f8a6a', '#c94f8a', '#e8d44f', '#7a5ac9', '#d8d8d0', '#5ab8c9'];
-const PANTS = ['#2c3242', '#4a3a2c', '#3a4a5a', '#5a2c2c'];
+const SHIRTS = ['#d85a5a', '#5a8ad8', '#5ad88a', '#d8c95a', '#a05ad8', '#d88a5a', '#5ad8c9', '#e8e8e8'];
 
 export function makePed(rng, x, y) {
-  const jog = rng() < 0.15; // beach joggers: faster, headband, out at dawn
   return {
     kind: 'ped',
-    x, y, radius: 11,
-    angle: rng() * Math.PI * 2,
-    speed: jog ? range(rng, 90, 120) : range(rng, 34, 62),
-    shirt: pick(rng, SHIRTS),
-    pants: pick(rng, PANTS),
-    skin: pick(rng, ['#e8b88a', '#c98a5a', '#8a5a3a', '#f0c8a0']),
-    state: 'walk', // walk | flee | down | taxi
-    stateT: 0,
-    target: null,
-    taxi: !jog && rng() < 0.22,
-    jog,
+    x, y,
+    px: x, py: y,
+    angle: rng.range(0, Math.PI * 2),
+    speed: rng.range(28, 52),
+    radius: 11,
+    shirt: rng.pick(SHIRTS),
+    skin: rng.pick(['#e8b88a', '#c98d5f', '#8a5f3d', '#f0c8a0']),
+    state: 'walk', // 'walk' | 'flee' | 'down'
+    targetX: x,
+    targetY: y,
+    retarget: 0,
+    fleeX: 0,
+    fleeY: 0,
+    wantsTaxi: false,
     dead: false,
-    bob: rng() * 10,
   };
 }
 
 export function spawnPeds(game, count) {
-  for (let i = 0; i < count; i += 1) {
-    const x = range(game.rng, 100, WORLD.width - 100);
-    const y = range(game.rng, 100, WORLD.beachTop - 60);
-    if (isOnRoad(x, y)) continue;
-    game.peds.push(makePed(game.rng, x, y));
+  for (let i = 0; i < count; i++) {
+    const x = game.rng.range(120, WORLD.width - 120);
+    const y = game.rng.range(120, WORLD.beachTop - 60);
+    if (hitsBuilding(game.world, x, y, 14)) continue;
+    const ped = makePed(game.rng, x, y);
+    // One in eight pedestrians is looking for a cab.
+    ped.wantsTaxi = game.rng.chance(0.12);
+    game.peds.push(ped);
   }
 }
 
-// Pick a nearby sidewalk point to wander toward.
-function wanderTarget(game, ped) {
-  for (let tries = 0; tries < 12; tries += 1) {
-    const x = ped.x + range(game.rng, -260, 260);
-    const y = ped.y + range(game.rng, -260, 260);
-    if (x < 60 || y < 60 || x > WORLD.width - 60 || y > WORLD.beachTop - 30) continue;
-    if (!isOnRoad(x, y)) return { x, y };
-  }
-  return { x: ped.x + 100, y: ped.y };
+// A pedestrian picks a new nearby spot to stroll toward.
+function pickStrollTarget(game, ped) {
+  const a = game.rng.range(0, Math.PI * 2);
+  const d = game.rng.range(60, 260);
+  ped.targetX = clamp(ped.x + Math.cos(a) * d, 60, WORLD.width - 60);
+  ped.targetY = clamp(ped.y + Math.sin(a) * d, 60, WORLD.beachTop - 40);
+  ped.retarget = game.rng.range(2, 6);
 }
 
-export function updatePed(game, ped, dt) {
-  if (ped.dead) return;
-  ped.bob += dt * 8;
-  if (ped.state === 'down') {
-    ped.stateT -= dt;
-    if (ped.stateT <= 0) { ped.state = 'walk'; ped.target = null; }
-    return;
-  }
-  // Flee from gunfire, the player's car, or a nearby chase.
-  let danger = null;
-  if (game.danger) {
-    const d = Math.hypot(game.danger.x - ped.x, game.danger.y - ped.y);
-    if (d < 260) danger = game.danger;
-  }
-  // A police chase rolling past scatters the sidewalk too.
-  if (!danger && game.police.wanted >= 2) {
-    for (const cop of game.police.cops) {
-      if (Math.hypot(cop.x - ped.x, cop.y - ped.y) < 220) {
-        danger = { x: cop.x, y: cop.y };
-        break;
+export function updatePeds(game, dt) {
+  const player = game.player;
+  for (const ped of game.peds) {
+    if (ped.dead) continue;
+    ped.px = ped.x;
+    ped.py = ped.y;
+    // Flee from gunfire, speeding cars and nearby police chases.
+    let danger = null;
+    if (game.recentShot && dist(ped.x, ped.y, game.recentShot.x, game.recentShot.y) < 320) {
+      danger = game.recentShot;
+    } else if (player.inCar && player.inCar.speed > 260 &&
+      dist(ped.x, ped.y, player.x, player.y) < 200) {
+      danger = player;
+    } else if (game.police.wanted > 0 && dist(ped.x, ped.y, player.x, player.y) < 160) {
+      danger = player;
+    }
+    if (danger) {
+      ped.state = 'flee';
+      ped.fleeX = ped.x - danger.x;
+      ped.fleeY = ped.y - danger.y;
+      const d = Math.hypot(ped.fleeX, ped.fleeY) || 1;
+      ped.fleeX /= d;
+      ped.fleeY /= d;
+    } else if (ped.state === 'flee') {
+      ped.state = 'walk';
+      pickStrollTarget(game, ped);
+    }
+    if (ped.state === 'flee') {
+      ped.x += ped.fleeX * 150 * dt;
+      ped.y += ped.fleeY * 150 * dt;
+      ped.angle = Math.atan2(ped.fleeY, ped.fleeX);
+    } else {
+      ped.retarget -= dt;
+      const dx = ped.targetX - ped.x;
+      const dy = ped.targetY - ped.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 12 || ped.retarget <= 0) {
+        pickStrollTarget(game, ped);
+      } else {
+        ped.angle = Math.atan2(dy, dx);
+        ped.x += (dx / d) * ped.speed * dt;
+        ped.y += (dy / d) * ped.speed * dt;
       }
     }
+    if (hitsBuilding(game.world, ped.x, ped.y, ped.radius)) {
+      ped.x = ped.px;
+      ped.y = ped.py;
+      pickStrollTarget(game, ped);
+    }
+    clampToWorld(ped, 30);
   }
-  if (danger) {
-    ped.state = 'flee';
-    const a = Math.atan2(ped.y - danger.y, ped.x - danger.x);
-    // Flee speed scales with the difficulty: Hardcore crowds panic faster.
-    const fleeSpeed = 150 * difficultyTuning(game.difficulty).fleeMul;
-    ped.x += Math.cos(a) * fleeSpeed * dt;
-    ped.y += Math.sin(a) * fleeSpeed * dt;
-    ped.angle = a;
-    collideBuildings(game.world, ped);
-    clampToWorld(ped, 14);
-    if (Math.hypot(danger.x - ped.x, danger.y - ped.y) > 420) ped.state = 'walk';
-    return;
-  }
-  if (ped.state === 'flee') ped.state = 'walk';
-  if (!ped.target || Math.hypot(ped.target.x - ped.x, ped.target.y - ped.y) < 18) {
-    ped.target = wanderTarget(game, ped);
-  }
-  const a = Math.atan2(ped.target.y - ped.y, ped.target.x - ped.x);
-  ped.angle = a;
-  ped.x += Math.cos(a) * ped.speed * dt;
-  ped.y += Math.sin(a) * ped.speed * dt;
-  collideBuildings(game.world, ped);
-  clampToWorld(ped, 14);
 }
 
-export function knockPedDown(game, ped) {
+// Knock a pedestrian down (a punch or a car hit). Returns the ped.
+export function knockDown(game, ped) {
   ped.state = 'down';
-  ped.stateT = 6;
-  game.addParticles(ped.x, ped.y, 8, '#d8d8d8');
+  ped.dead = false;
+  game.addParticles(ped.x, ped.y, 8, '#d85a5a');
+  return ped;
 }
 
-export { rangeInt };
+// The nearest pedestrian who wants a taxi, within range of (x, y).
+export function nearestFarePed(game, x, y, maxDist) {
+  let best = null;
+  let bestD = maxDist;
+  for (const ped of game.peds) {
+    if (!ped.wantsTaxi || ped.state === 'down') continue;
+    const d = dist(ped.x, ped.y, x, y);
+    if (d < bestD) { bestD = d; best = ped; }
+  }
+  return best;
+}

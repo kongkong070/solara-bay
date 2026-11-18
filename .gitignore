@@ -7,3 +7,4 @@ howto.txt
 *.log
 *.tmp
 .DS_Store
+verify-*.mjs

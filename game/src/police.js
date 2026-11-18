@@ -1,195 +1,184 @@
-// The Solara Bay Police Department: wanted levels, interceptors that chase
-// and ram, and foot cops who arrest you. Heat fades when you stay out of
-// sight; at five stars the whole city is after you.
-import { WANTED, POLICE_TUNING, difficultyTuning } from './config.js';
-import { clamp, angleDiff } from './random.js';
+// The SBPD: wanted stars, heat that cools when you hide, interceptors
+// that ram you and foot cops who chase you down on foot.
+import { WORLD, TUNING } from './config.js';
+import { clamp, dist } from './util.js';
+import { randomRoadPoint, clampToWorld, hitsBuilding } from './world.js';
 import { makeCar, driveCar, collideCars } from './vehicles.js';
-import { collideBuildings, clampToWorld, randomRoadPoint } from './world.js';
 import { hurtPlayer } from './player.js';
 
 export function makePolice() {
-  return {
+  const police = {
     wanted: 0,
-    heat: 0, // 0..100 within the current level; fills on crimes
-    calmT: 0, // seconds out of sight; cools the heat
-    seenT: 0, // seconds a cop has seen the player recently
-    cops: [], // police cars
-    footCops: [], // police on foot
-    arrestT: 0, // arrest progress while a cop holds you
-    lastCrime: '',
+    heat: 0,
+    calmTimer: 0,
+    spawnTimer: 0,
+    cops: [], // foot cops {x, y, down, downTimer, speed}
+    cars: [], // interceptor cars, also listed in game.cars
+    bustTimer: 0,
+    bestWanted: 0,
   };
+  // Bound helpers so the rest of the game calls police.addHeat(game, n).
+  police.addHeat = (game, crimes) => addHeat(game, crimes);
+  police.setWanted = (game, stars) => setWanted(game, stars);
+  return police;
 }
 
-export function raiseWanted(game, levels, crime) {
-  const pol = game.police;
-  pol.lastCrime = crime;
-  if (pol.wanted >= 5) return;
-  // Heat per crime comes from the active difficulty: Chill forgives, Hardcore
-  // stacks stars fast.
-  pol.heat += difficultyTuning(game.difficulty).heatPerCrime * levels;
-  if (pol.heat >= 100) {
-    pol.heat = 0;
-    pol.wanted = Math.min(5, pol.wanted + levels);
-    game.floater(game.player.x, game.player.y - 44, 'WANTED LEVEL ' + pol.wanted, '#ff5a4a');
-    game.audio.blip(880, 0.2, 'square', 0.1);
+// A crime adds heat; heat maps to wanted stars.
+export function addHeat(game, crimes) {
+  const police = game.police;
+  police.heat += game.diff.heatPerCrime * crimes;
+  const stars = Math.min(TUNING.wantedMax, Math.floor(police.heat / TUNING.heatPerStar));
+  if (stars > police.wanted) {
+    police.wanted = stars;
+    police.bestWanted = Math.max(police.bestWanted, stars);
+    if (stars >= 3) game.addMessage('Wanted level ' + stars + '! The SBPD is all over you.');
   }
-  pol.calmT = 0;
+  police.calmTimer = 0;
 }
 
-export function lowerWanted(game, levels) {
-  const pol = game.police;
-  pol.wanted = Math.max(0, pol.wanted - levels);
-  pol.heat = 0;
-  if (pol.wanted === 0) game.floater(game.player.x, game.player.y - 44, 'You lost them', '#7ae08a');
-}
-
-// Spawn a police car on a road near the player, already rolling. Its top
-// speed scales with the difficulty: Hardcore interceptors are genuinely
-// faster, Chill ones a touch slower.
-function spawnCopCar(game) {
-  const pol = game.police;
-  const p = randomRoadPoint(game.rng, game.player, 520);
-  const car = makeCar(game.rng, 'police', p.x, p.y, 0);
-  car.spec = Object.assign({}, car.spec, { top: car.spec.top * difficultyTuning(game.difficulty).copSpeedMul });
-  car.driver = 'police';
-  car.color = '#20242c';
-  game.cars.push(car);
-  pol.cops.push(car);
-  return car;
-}
-
-function spawnFootCop(game) {
-  const pol = game.police;
-  const a = game.rng() * Math.PI * 2;
-  const cop = {
-    kind: 'cop', x: game.player.x + Math.cos(a) * 320, y: game.player.y + Math.sin(a) * 320,
-    radius: 12, angle: a, speed: 175 * difficultyTuning(game.difficulty).copSpeedMul, state: 'chase', shootT: 0, shirt: '#20242c',
-  };
-  clampToWorld(cop, 16);
-  pol.footCops.push(cop);
-  return cop;
+export function setWanted(game, stars) {
+  const police = game.police;
+  police.wanted = clamp(stars, 0, TUNING.wantedMax);
+  police.heat = police.wanted * TUNING.heatPerStar + 1;
+  police.bestWanted = Math.max(police.bestWanted, police.wanted);
 }
 
 export function updatePolice(game, dt) {
-  const pol = game.police;
-  const p = game.player;
-  const level = WANTED[pol.wanted];
-  // How many cop cars the level wants on the road.
-  const wantCars = pol.wanted === 0 ? 0 : Math.min(1 + Math.floor(pol.wanted / 2), 4);
-  // Remove wrecked cops, then top up.
-  pol.cops = pol.cops.filter((c) => !c.dead);
-  if (pol.cops.length < wantCars && game.time - (pol.lastSpawn || 0) > POLICE_TUNING.spawnInterval) {
-    spawnCopCar(game);
-    pol.lastSpawn = game.time;
+  const police = game.police;
+  const player = game.player;
+  if (player.dead) return;
+
+  // Are any cops close enough to see the player?
+  let seen = false;
+  for (const cop of police.cops) {
+    if (!cop.down && dist(cop.x, cop.y, player.x, player.y) < 420) seen = true;
   }
-  // Foot cops appear from level 2 up; the cap grows with the wanted level
-  // and with the difficulty (Hardcore sends a fourth cop at five stars).
-  const tune = difficultyTuning(game.difficulty);
-  const footCap = tune.footCopCap[pol.wanted] || 0;
-  if (pol.wanted >= 2 && pol.footCops.length < footCap && game.time - (pol.lastFootSpawn || 0) > 6) {
-    spawnFootCop(game);
-    pol.lastFootSpawn = game.time;
+  for (const car of police.cars) {
+    if (!car.dead && dist(car.x, car.y, player.x, player.y) < 520) seen = true;
   }
-  if (pol.wanted === 0) {
-    pol.footCops = [];
-  }
-  // Chase: steer hard at the player, ram, and slow them down.
-  for (const cop of pol.cops) {
-    const target = Math.atan2(p.y - cop.y, p.x - cop.x);
-    const diff = angleDiff(cop.angle, target);
-    const steer = clamp(diff * 1.6, -1, 1);
-    const dist = Math.hypot(p.x - cop.x, p.y - cop.y);
-    const throttle = dist > 60 ? 1 : 0.4;
-    driveCar(cop, dt, throttle, steer);
-    cop.sirenPhase += dt * 6;
-    if (collideBuildings(game.world, cop)) cop.speed *= 0.4;
-    if (collideCars(game, cop)) game.audio.crash();
-    clampToWorld(cop, 24);
-    // A ram that connects hurts the player's car — or the player.
-    if (dist < 46) {
-      if (p.inCar) {
-        p.inCar.health -= 14 * dt;
-        p.inCar.speed *= Math.max(0, 1 - 0.9 * dt);
-        if (game.time - (pol.lastRamSound || 0) > 0.5) {
-          game.audio.crash();
-          pol.lastRamSound = game.time;
-        }
-      } else if (game.time - (pol.lastRamSound || 0) > 1) {
-        hurtPlayer(game, 6, 'police');
-        pol.lastRamSound = game.time;
-      }
+  if (police.wanted > 0 && !seen) {
+    police.calmTimer += dt;
+    if (police.calmTimer >= game.diff.calmSeconds) {
+      police.calmTimer = 0;
+      police.heat = Math.max(0, police.heat - TUNING.heatPerStar);
+      police.wanted = Math.floor(police.heat / TUNING.heatPerStar);
+      if (police.wanted === 0) game.addMessage('You lost them. Stay clean.');
     }
-  }
-  // Foot cops run the player down and arrest them.
-  for (const cop of pol.footCops) {
-    const d = Math.hypot(p.x - cop.x, p.y - cop.y);
-    const a = Math.atan2(p.y - cop.y, p.x - cop.x);
-    cop.angle = a;
-    if (d > 24) {
-      cop.x += Math.cos(a) * cop.speed * dt;
-      cop.y += Math.sin(a) * cop.speed * dt;
-    }
-    collideBuildings(game.world, cop);
-    clampToWorld(cop, 14);
-    if (!p.inCar && d < 30) {
-      pol.arrestT += dt;
-      if (pol.arrestT > 1.4) {
-        pol.arrestT = 0;
-        game.endRun('busted');
-        return;
-      }
-    } else {
-      pol.arrestT = Math.max(0, pol.arrestT - dt * 2);
-    }
-    // At three stars and up, foot cops shoot.
-    if (pol.wanted >= 3 && d < 320 && d > 60) {
-      cop.shootT -= dt;
-      if (cop.shootT <= 0) {
-        cop.shootT = 0.9;
-        game.bullets.push({
-          x: cop.x, y: cop.y,
-          vx: Math.cos(a) * 620, vy: Math.sin(a) * 620,
-          life: 0.6, from: 'police',
-        });
-        game.audio.noise(0.1, 0.1, 2600);
-      }
-    }
-  }
-  // Heat: being seen keeps it hot; hiding cools it down to the next level.
-  const nearestCop = nearestCopDist(game);
-  const seen = nearestCop < (p.inCar ? 560 : 380);
-  if (seen) {
-    pol.seenT += dt;
-    pol.calmT = 0;
   } else {
-    pol.calmT += dt;
-    pol.seenT = Math.max(0, pol.seenT - dt);
-    // Hiding cools a star off; Chill cools sooner, Hardcore makes you wait.
-    if (pol.calmT > difficultyTuning(game.difficulty).calmSeconds && pol.wanted > 0) {
-      pol.calmT = 0;
-      lowerWanted(game, 1);
+    police.calmTimer = 0;
+  }
+
+  // Spawn interceptors and foot cops to match the wanted level.
+  police.spawnTimer -= dt;
+  if (police.wanted > 0 && police.spawnTimer <= 0) {
+    police.spawnTimer = 2.2;
+    const wantCars = Math.min(police.wanted, 3);
+    const liveCars = police.cars.filter((c) => !c.dead).length;
+    if (liveCars < wantCars) spawnInterceptor(game);
+    const wantCops = police.wanted >= 2 ? Math.min(police.wanted - 1, 3) : 0;
+    const liveCops = police.cops.filter((c) => !c.down).length;
+    if (liveCops < wantCops) spawnFootCop(game);
+  }
+
+  // Interceptors chase and ram.
+  for (const car of police.cars) {
+    if (car.dead) continue;
+    const dx = player.x - car.x;
+    const dy = player.y - car.y;
+    const d = Math.hypot(dx, dy);
+    const wantAngle = Math.atan2(dy, dx);
+    const steer = clamp(((wantAngle - car.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI, -1, 1);
+    const throttle = d > 90 ? 1 : 0.4;
+    driveCar(car, dt, throttle, steer, false);
+    if (hitsBuilding(game.world, car.x, car.y, 20)) {
+      car.speed *= 0.4;
+    }
+    collideCars(game, car);
+    clampToWorld(car, 24);
+    // Ramming the player hurts.
+    if (d < 46 && Math.abs(car.speed) > 80) {
+      hurtPlayer(game, 12 * dt * 10);
+      car.speed *= 0.6;
     }
   }
-  game.audio.setSiren(pol.wanted, nearestCop < 700);
+  police.cars = police.cars.filter((c) => !c.dead && dist(c.x, c.y, player.x, player.y) < 1600);
+
+  // Foot cops run the player down.
+  for (const cop of police.cops) {
+    if (cop.down) {
+      cop.downTimer -= dt;
+      if (cop.downTimer <= 0) cop.down = false;
+      continue;
+    }
+    const dx = player.x - cop.x;
+    const dy = player.y - cop.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const chaseSpeed = cop.speed;
+    cop.x += (dx / d) * chaseSpeed * dt;
+    cop.y += (dy / d) * chaseSpeed * dt;
+    cop.angle = Math.atan2(dy, dx);
+    clampToWorld(cop, 24);
+    // A cop on top of the player on foot starts the bust.
+    if (d < 30 && !player.inCar) {
+      police.bustTimer += dt;
+      if (police.bustTimer > 1.2) {
+        bustPlayer(game);
+      }
+    }
+  }
+  if (police.cops.every((c) => c.down || dist(c.x, c.y, player.x, player.y) >= 30 || player.inCar)) {
+    police.bustTimer = 0;
+  }
+  police.cops = police.cops.filter((c) => dist(c.x, c.y, player.x, player.y) < 1400 || c.down);
 }
 
-export function nearestCopDist(game) {
-  let best = Infinity;
-  for (const cop of game.police.cops) {
-    best = Math.min(best, Math.hypot(cop.x - game.player.x, cop.y - game.player.y));
-  }
-  for (const cop of game.police.footCops) {
-    best = Math.min(best, Math.hypot(cop.x - game.player.x, cop.y - game.player.y));
-  }
-  return best;
+function spawnInterceptor(game) {
+  const p = randomRoadPoint(game.rng, game.world, game.player.x, game.player.y, 500);
+  const car = makeCar(game.rng, 'police', p.x, p.y, 0);
+  car.driver = 'police';
+  car.spec = { ...car.spec, top: car.spec.top * (game.diff.label === 'Hardcore' ? 1.12 : 1) };
+  game.cars.push(car);
+  game.police.cars.push(car);
 }
 
-export function clearPolice(game) {
-  const pol = game.police;
-  for (const cop of pol.cops) cop.dead = true;
-  pol.cops = [];
-  pol.footCops = [];
-  pol.wanted = 0;
-  pol.heat = 0;
-  pol.arrestT = 0;
+function spawnFootCop(game) {
+  const a = game.rng.range(0, Math.PI * 2);
+  const cop = {
+    kind: 'cop',
+    x: game.player.x + Math.cos(a) * 320,
+    y: game.player.y + Math.sin(a) * 320,
+    angle: 0,
+    speed: 200,
+    radius: 12,
+    down: false,
+    downTimer: 0,
+  };
+  clampToWorld(cop, 30);
+  game.police.cops.push(cop);
 }
+
+export function bustPlayer(game) {
+  const player = game.player;
+  const fine = Math.min(player.cash, TUNING.bustFine);
+  player.cash -= fine;
+  player.health = TUNING.playerHealth;
+  player.armor = 0;
+  if (player.inCar) {
+    player.inCar.driver = null;
+    player.inCar = null;
+  }
+  // Woken up at the hospital, clean slate.
+  player.x = 1000;
+  player.y = 1840;
+  player.dead = false;
+  game.police.wanted = 0;
+  game.police.heat = 0;
+  game.police.cars = [];
+  game.police.cops = [];
+  game.police.bustTimer = 0;
+  game.state = 'busted';
+  game.bustedReason = 'Busted! The SBPD took $' + fine + ' and dropped you at Solara General.';
+  game.audio.busted();
+}
+
+export { addHeat as policeAddHeat, setWanted as policeSetWanted };
