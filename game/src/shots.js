@@ -1,4 +1,4 @@
-// Deterministic screenshot scenes behind ?shot=chase|mission|start|night.
+// Deterministic screenshot scenes behind ?shot=chase|mission|start|night|ledger.
 // Each one plays the real game forward from a fresh seeded world with a
 // scripted autopilot, so the frame is what a short real game looks like and
 // the same seed always gives the same frame.
@@ -110,15 +110,39 @@ export function stageShot(name, game) {
   }
   if (name === 'night') {
     // Golden hour on the beach: Rio on foot, palms, water, the city behind.
+    // The new Beach Party mission is live, and a health crate waits nearby.
     game.state = 'play';
     game.lighting = 'sunset';
     game.player.x = 1000;
     game.player.y = 2390;
     game.player.angle = -Math.PI / 2;
     game.clockMinutes = 18 * 60 + 40;
+    startMission(game, 6);
     simulateOnFoot(game, 6);
     game.camera.x = game.player.x;
     game.camera.y = game.player.y - 140;
+    return { screen: 'play' };
+  }
+  if (name === 'ledger') {
+    // Midnight Ledger at full night: Rio in a Bandit Muscle, three stars,
+    // headlights cutting the dark on the way to the Marina Penthouse.
+    game.state = 'play';
+    game.clockMinutes = 21 * 60 + 15;
+    game.lighting = 'night';
+    const muscle = makeCar(game.rng, 'muscle', 1400, 1000, 0);
+    muscle.driver = 'player';
+    muscle.health = 100000; // staging: the shot car does not wreck mid-scene
+    game.cars.push(muscle);
+    game.player.inCar = muscle;
+    game.player.x = 1400;
+    game.player.y = 1000;
+    game.player.angle = 0;
+    startMission(game, 7);
+    game.police.wanted = 3;
+    game.police.heat = 40;
+    simulateDrive(game, 10, [[1400, 600], [1400, 200]]);
+    game.camera.x = game.player.x;
+    game.camera.y = game.player.y;
     return { screen: 'play' };
   }
   // Default: the title screen over a living city.

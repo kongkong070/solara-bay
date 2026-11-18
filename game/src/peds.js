@@ -8,18 +8,20 @@ const SHIRTS = ['#e07a3a', '#3a6fd8', '#4f8a6a', '#c94f8a', '#e8d44f', '#7a5ac9'
 const PANTS = ['#2c3242', '#4a3a2c', '#3a4a5a', '#5a2c2c'];
 
 export function makePed(rng, x, y) {
+  const jog = rng() < 0.15; // beach joggers: faster, headband, out at dawn
   return {
     kind: 'ped',
     x, y, radius: 11,
     angle: rng() * Math.PI * 2,
-    speed: range(rng, 34, 62),
+    speed: jog ? range(rng, 90, 120) : range(rng, 34, 62),
     shirt: pick(rng, SHIRTS),
     pants: pick(rng, PANTS),
     skin: pick(rng, ['#e8b88a', '#c98a5a', '#8a5a3a', '#f0c8a0']),
     state: 'walk', // walk | flee | down | taxi
     stateT: 0,
     target: null,
-    taxi: rng() < 0.22,
+    taxi: !jog && rng() < 0.22,
+    jog,
     dead: false,
     bob: rng() * 10,
   };
@@ -59,6 +61,15 @@ export function updatePed(game, ped, dt) {
     const d = Math.hypot(game.danger.x - ped.x, game.danger.y - ped.y);
     if (d < 260) danger = game.danger;
   }
+  // A police chase rolling past scatters the sidewalk too.
+  if (!danger && game.police.wanted >= 2) {
+    for (const cop of game.police.cops) {
+      if (Math.hypot(cop.x - ped.x, cop.y - ped.y) < 220) {
+        danger = { x: cop.x, y: cop.y };
+        break;
+      }
+    }
+  }
   if (danger) {
     ped.state = 'flee';
     const a = Math.atan2(ped.y - danger.y, ped.x - danger.x);
@@ -67,7 +78,7 @@ export function updatePed(game, ped, dt) {
     ped.angle = a;
     collideBuildings(game.world, ped);
     clampToWorld(ped, 14);
-    if (Math.hypot(game.danger.x - ped.x, game.danger.y - ped.y) > 420) ped.state = 'walk';
+    if (Math.hypot(danger.x - ped.x, danger.y - ped.y) > 420) ped.state = 'walk';
     return;
   }
   if (ped.state === 'flee') ped.state = 'walk';

@@ -1,4 +1,4 @@
-// Story and side work in Solara Bay. Six story missions with Lena Cruz,
+// Story and side work in Solara Bay. Eight story missions with Lena Cruz,
 // plus taxi fares and the hidden packages. The mission engine is a small
 // stage machine: each stage names a place or a deed, and the HUD points at it.
 import { fmtCash } from './random.js';
@@ -60,6 +60,23 @@ export function buildMissions(world) {
         stage('collect', 1000, 2200, 'Checkpoint 3 of 4: Beach Road', {}),
         stage('collect', 2200, 2200, 'Checkpoint 4 of 4: Stadium Loop', {}),
         stage('driveTo', L.penthouse.x, L.penthouse.y, 'Finish at the Marina Penthouse', { r: 90 }),
+      ],
+    },
+    {
+      id: 'beach', title: 'Beach Party', reward: 600,
+      brief: 'The Neon Palms beach party needs supplies before sunset. Three crates are stashed along the sand — grab them all in 120 seconds.',
+      stages: [
+        stage('collect', 820, 2440, 'Crate 1 of 3: Palma Beach Bar', { time: 120 }),
+        stage('collect', 1480, 2440, 'Crate 2 of 3: Sunset Pier', {}),
+        stage('collect', 2200, 2440, 'Crate 3 of 3: East Sand', {}),
+      ],
+    },
+    {
+      id: 'ledger', title: 'Midnight Ledger', reward: 900,
+      brief: 'The ledger has to reach the Penthouse after dark, and the SBPD is already on you. Lose them, then slip the book to the safehouse.',
+      stages: [
+        stage('driveTo', L.penthouse.x, L.penthouse.y, 'Deliver the ledger to the Marina Penthouse', { r: 90, wantedOnStart: 3 }),
+        stage('escape', L.safehouse.x, L.safehouse.y, 'Lose the cops — reach the Safehouse', { r: 90 }),
       ],
     },
   ];

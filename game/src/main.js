@@ -1,8 +1,8 @@
 // Solara Bay — entry point. Builds the game state, runs the loop, wires
 // every system together and serves the deterministic screenshot scenes.
-import { WORLD, VIEW, DAY } from './config.js';
+import { WORLD, VIEW, DAY, LIGHTING } from './config.js';
 import { makeRng, clamp } from './random.js';
-import { createWorld, collideBuildings, clampToWorld } from './world.js';
+import { createWorld, collideBuildings, clampToWorld, updatePickups } from './world.js';
 import { createInput, keyDown } from './input.js';
 import { createAudio } from './audio.js';
 import { makePlayer, updatePlayer, hurtPlayer } from './player.js';
@@ -14,6 +14,7 @@ import { readSave, writeSave, applySave, saveSummaryText } from './save.js';
 import {
   createCamera, drawWorld, drawCars, drawPeds, drawPlayer, drawBullets,
   drawParticles, drawMarker, drawHUD, drawTitle, drawPause, drawEnd, drawSunsetGrade,
+  drawNightGrade,
 } from './render.js';
 import { stageShot } from './shots.js';
 
@@ -49,7 +50,8 @@ export function createGame() {
     bannerText: null,
     bannerT: 0,
     storyComplete: false,
-    stats: { fares: 0, packages: 0, stolen: 0, bestWanted: 0 },
+    minimapZoom: 1, // 0 small, 1 normal, 2 large: N key or mouse wheel
+    stats: { fares: 0, packages: 0, stolen: 0, bestWanted: 0, pickups: 0 },
     saveExists: false,
     saveSummary: '',
     edge(name) {
@@ -114,7 +116,8 @@ function resetGame(game, seed) {
   game.bannerText = null;
   game.bannerT = 0;
   game.storyComplete = false;
-  game.stats = { fares: 0, packages: 0, stolen: 0, bestWanted: 0 };
+  game.minimapZoom = 1;
+  game.stats = { fares: 0, packages: 0, stolen: 0, bestWanted: 0, pickups: 0 };
   spawnTraffic(game, 14);
   spawnParked(game, 12);
   spawnPeds(game, 64);
@@ -163,6 +166,12 @@ function updateGame(game, dt) {
   for (const ped of game.peds) updatePed(game, ped, dt);
   if (game.state !== 'play') return;
   game.clockMinutes += dt * DAY.minutesPerSecond;
+  // Day/night cycle: the clock drives the lighting — day, golden hour,
+  // then night with headlights after 19:00 until dawn at 06:00.
+  const mins = game.clockMinutes % (24 * 60);
+  game.lighting = mins >= LIGHTING.nightStart || mins < LIGHTING.nightEnd ? 'night'
+    : mins >= LIGHTING.sunsetStart ? 'sunset' : 'day';
+  updatePickups(game.world, dt);
   // Mouse position in world space (for aiming). input.mouse is already in
   // canvas pixels, so only the camera offset applies.
   game.mouseWorld.x = game.camera.x - VIEW.width / 2 + game.input.mouse.x;
@@ -259,6 +268,13 @@ function updateGame(game, dt) {
     game.audio.setEngine(0, false);
   }
   if (game.edge('q')) game.audio.toggleMute();
+  if (game.edge('n')) game.minimapZoom = (game.minimapZoom + 1) % 3;
+  if (game.input.wheelY !== 0) {
+    // Wheel up zooms the minimap in, wheel down zooms it out.
+    const steps = game.input.wheelY > 0 ? -1 : 1;
+    game.minimapZoom = clamp(game.minimapZoom + steps, 0, 2);
+    game.input.wheelY = 0;
+  }
   if (game.edge('m') && !game.missions.active && game.missions.index < game.missions.list.length) {
     startMission(game, game.missions.index);
   }
@@ -280,6 +296,7 @@ function renderGame(game) {
   drawParticles(ctx2, game);
   ctx2.restore();
   if (game.lighting === 'sunset') drawSunsetGrade(ctx2);
+  else if (game.lighting === 'night') drawNightGrade(ctx2, game);
   if (game.state === 'title') drawTitle(ctx2, game);
   else if (game.state === 'pause') { drawHUD(ctx2, game); drawPause(ctx2, game); }
   else if (game.state === 'busted' || game.state === 'wasted' || game.state === 'complete') {

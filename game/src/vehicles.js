@@ -8,6 +8,7 @@ export const CAR_TYPES = {
   sedan: { w: 46, h: 22, color: '#c94f4f', accel: 1.0, top: 1.0, name: 'Solara Sedan' },
   taxi: { w: 46, h: 22, color: '#e8b93a', accel: 0.95, top: 0.95, name: 'Bay Taxi' },
   sport: { w: 48, h: 21, color: '#3a6fd8', accel: 1.35, top: 1.25, name: 'Cometa GT' },
+  muscle: { w: 50, h: 23, color: '#e07a3a', accel: 1.2, top: 1.15, name: 'Bandit Muscle' },
   truck: { w: 58, h: 26, color: '#7a7a72', accel: 0.7, top: 0.8, name: 'Hauler' },
   coupe: { w: 46, h: 21, color: '#8a4fa8', accel: 1.15, top: 1.1, name: 'Vela Coupe' },
   police: { w: 48, h: 22, color: '#20242c', accel: 1.25, top: 1.18, name: 'SBPD Interceptor' },
@@ -110,7 +111,7 @@ export function updateTraffic(car, dt, game) {
 export function spawnTraffic(game, count) {
   for (let i = 0; i < count; i += 1) {
     const p = randomRoadPoint(game.rng, game.player, 420);
-    const type = pick(game.rng, ['sedan', 'sedan', 'taxi', 'coupe', 'van', 'truck']);
+    const type = pick(game.rng, ['sedan', 'sedan', 'taxi', 'coupe', 'van', 'truck', 'muscle']);
     const car = makeCar(game.rng, type, p.x, p.y, game.rng() * Math.PI * 2);
     car.driver = 'traffic';
     car.cruise = range(game.rng, -30, 60);
@@ -121,7 +122,7 @@ export function spawnTraffic(game, count) {
 export function spawnParked(game, count) {
   for (let i = 0; i < count; i += 1) {
     const p = randomRoadPoint(game.rng, game.player, 300);
-    const type = pick(game.rng, ['sedan', 'sport', 'coupe', 'taxi', 'van']);
+    const type = pick(game.rng, ['sedan', 'sport', 'coupe', 'taxi', 'van', 'muscle']);
     const angle = game.rng() < 0.5 ? 0 : Math.PI / 2;
     const car = makeCar(game.rng, type, p.x + range(game.rng, -30, 30), p.y + range(game.rng, -30, 30), angle + (game.rng() < 0.5 ? 0 : Math.PI));
     car.driver = null; // parked: free to steal

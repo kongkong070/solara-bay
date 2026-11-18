@@ -1,7 +1,7 @@
 // The Solara Bay Police Department: wanted levels, interceptors that chase
 // and ram, and foot cops who arrest you. Heat fades when you stay out of
 // sight; at five stars the whole city is after you.
-import { WANTED } from './config.js';
+import { WANTED, POLICE_TUNING } from './config.js';
 import { clamp, angleDiff } from './random.js';
 import { makeCar, driveCar, collideCars } from './vehicles.js';
 import { collideBuildings, clampToWorld, randomRoadPoint } from './world.js';
@@ -24,7 +24,7 @@ export function raiseWanted(game, levels, crime) {
   const pol = game.police;
   pol.lastCrime = crime;
   if (pol.wanted >= 5) return;
-  pol.heat += 34 * levels;
+  pol.heat += POLICE_TUNING.heatPerCrime * levels;
   if (pol.heat >= 100) {
     pol.heat = 0;
     pol.wanted = Math.min(5, pol.wanted + levels);
@@ -73,12 +73,13 @@ export function updatePolice(game, dt) {
   const wantCars = pol.wanted === 0 ? 0 : Math.min(1 + Math.floor(pol.wanted / 2), 4);
   // Remove wrecked cops, then top up.
   pol.cops = pol.cops.filter((c) => !c.dead);
-  if (pol.cops.length < wantCars && game.time - (pol.lastSpawn || 0) > 2.5) {
+  if (pol.cops.length < wantCars && game.time - (pol.lastSpawn || 0) > POLICE_TUNING.spawnInterval) {
     spawnCopCar(game);
     pol.lastSpawn = game.time;
   }
-  // Foot cops appear from level 2 up, at most two.
-  if (pol.wanted >= 2 && pol.footCops.length < 2 && game.time - (pol.lastFootSpawn || 0) > 6) {
+  // Foot cops appear from level 2 up; the cap grows with the wanted level.
+  const footCap = POLICE_TUNING.footCopCap[pol.wanted] || 0;
+  if (pol.wanted >= 2 && pol.footCops.length < footCap && game.time - (pol.lastFootSpawn || 0) > 6) {
     spawnFootCop(game);
     pol.lastFootSpawn = game.time;
   }
@@ -156,7 +157,7 @@ export function updatePolice(game, dt) {
   } else {
     pol.calmT += dt;
     pol.seenT = Math.max(0, pol.seenT - dt);
-    if (pol.calmT > 9 && pol.wanted > 0) {
+    if (pol.calmT > POLICE_TUNING.calmSeconds && pol.wanted > 0) {
       pol.calmT = 0;
       lowerWanted(game, 1);
     }

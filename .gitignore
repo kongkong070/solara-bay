@@ -4,3 +4,5 @@ kit.json
 RULES.txt
 requirements.json
 howto.txt
+*.log
+.DS_Store

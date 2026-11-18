@@ -19,6 +19,7 @@ export function writeSave(game) {
       cash: game.player.cash,
       missions: game.missions.completed,
       packages: game.world.packages.map((p) => p.taken),
+      pickups: game.world.pickups.map((p) => p.taken),
       stats: game.stats,
       savedAt: Date.now(),
     };
@@ -37,10 +38,15 @@ export function applySave(game, save) {
       if (taken && game.world.packages[i]) game.world.packages[i].taken = true;
     });
   }
+  if (Array.isArray(save.pickups)) {
+    save.pickups.forEach((taken, i) => {
+      if (taken && game.world.pickups[i]) game.world.pickups[i].taken = true;
+    });
+  }
   if (save.stats) Object.assign(game.stats, save.stats);
 }
 
 export function saveSummaryText(save) {
   if (!save) return '';
-  return '$' + Math.round(save.cash).toLocaleString('en-US') + ' • ' + (save.missions || 0) + '/6 missions';
+  return '$' + Math.round(save.cash).toLocaleString('en-US') + ' • ' + (save.missions || 0) + '/8 missions';
 }

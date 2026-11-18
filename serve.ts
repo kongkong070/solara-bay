@@ -39,6 +39,13 @@ const MIME: Record<string, string> = {
 
 createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
+  // Health check for the playtest harness: no file involved.
+  if (url.pathname === '/health') {
+    const body = JSON.stringify({ ok: true, game: 'solara-bay' });
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) });
+    response.end(body);
+    return;
+  }
   let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);
@@ -65,6 +72,7 @@ createServer((request, response) => {
     'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
     'content-length': size,
     'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
   });
   createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {

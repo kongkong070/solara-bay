@@ -4,6 +4,7 @@ const STATIONS = [
   { name: 'SOLARA FM 88.4', bass: [55, 55, 65.4, 49], tempo: 112 },
   { name: 'PALMA BEATS 101.1', bass: [55, 49, 55, 82.4], tempo: 128 },
   { name: 'BAY CLASSICS 94.7', bass: [65.4, 58.3, 49, 58.3], tempo: 96 },
+  { name: 'NIGHT DRIVE 106.9', bass: [49, 49, 58.3, 43.7], tempo: 88 },
 ];
 
 export function createAudio() {
@@ -62,8 +63,10 @@ export function createAudio() {
     const on = wanted > 0 && near;
     audio.sirenGain.gain.setTargetAtTime(on ? 0.018 : 0, audio.ctx.currentTime, 0.2);
     if (on) {
+      // The siren climbs with the wanted level: more stars, more urgency.
       const t = audio.ctx.currentTime;
-      audio.sirenOsc.frequency.setTargetAtTime(t % 1 < 0.5 ? 660 : 880, t, 0.05);
+      const base = 620 + wanted * 40;
+      audio.sirenOsc.frequency.setTargetAtTime(t % 1 < 0.5 ? base : base + 220, t, 0.05);
     }
   };
   audio.blip = function blip(freq, dur, type, vol) {
@@ -102,6 +105,12 @@ export function createAudio() {
   audio.shot = function shot() { audio.noise(0.14, 0.28, 3200); audio.blip(180, 0.08, 'square', 0.08); };
   audio.punch = function punch() { audio.noise(0.08, 0.16, 900); };
   audio.pickup = function pickup() { audio.blip(660, 0.09, 'sine', 0.14); setTimeout(() => audio.blip(990, 0.14, 'sine', 0.14), 80); };
+  // Supply crates each get their own little chime.
+  audio.supply = function supply(kind) {
+    if (kind === 'health') { audio.blip(523, 0.12, 'sine', 0.15); setTimeout(() => audio.blip(784, 0.18, 'sine', 0.15), 90); }
+    else if (kind === 'armor') { audio.blip(392, 0.12, 'triangle', 0.15); setTimeout(() => audio.blip(587, 0.18, 'triangle', 0.15), 90); }
+    else { audio.blip(880, 0.08, 'square', 0.1); setTimeout(() => audio.blip(1174, 0.12, 'square', 0.1), 70); }
+  };
   audio.crash = function crash() { audio.noise(0.22, 0.22, 700); };
   audio.missionDone = function missionDone() {
     [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => audio.blip(f, 0.22, 'triangle', 0.16), i * 110));

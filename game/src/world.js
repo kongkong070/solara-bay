@@ -2,7 +2,7 @@
 // Roads, blocks, buildings, parks, a beach and a pier. Everything the game
 // collides with or draws lives here, so the renderer and the AI share it.
 import { WORLD, COLORS } from './config.js';
-import { makeRng, pick, range, rangeInt } from './random.js';
+import { makeRng, pick, range, rangeInt, shuffle } from './random.js';
 
 export const KIND_BUILDING = 'building';
 export const KIND_PARK = 'park';
@@ -60,7 +60,26 @@ function buildLandmarks() {
     beachBar: { x: 1000, y: 2400, name: 'Palma Beach Bar' },
     plaza: { x: 1800, y: 1400, name: 'Solara Plaza' },
     stadium: { x: 2200, y: 1800, name: 'Bay Stadium' },
+    nightclub: { x: 2200, y: 400, name: 'Neon Palms' },
+    pier: { x: 1480, y: 2440, name: 'Sunset Pier' },
   };
+}
+
+// Supply crates: health, armour and ammo, shuffled across fixed spots so
+// the same seed always deals the same layout. They respawn after
+// PICKUPS.respawnSeconds; taken crates come back for the next run.
+export const PICKUP_SPOTS = [
+  [820, 420, 'health'], [2580, 820, 'armor'], [420, 1620, 'ammo'],
+  [2020, 1220, 'health'], [1220, 1980, 'armor'], [2820, 1620, 'ammo'],
+  [1620, 820, 'health'], [620, 2200, 'ammo'], [2420, 2200, 'health'],
+  [1000, 2440, 'armor'],
+];
+
+function buildPickups(rng) {
+  const kinds = shuffle(rng, PICKUP_SPOTS.map((s) => s[2]));
+  return PICKUP_SPOTS.map(([x, y], i) => ({
+    x, y, kind: kinds[i], taken: false, respawnT: 0,
+  }));
 }
 
 export function createWorld(seed) {
@@ -75,8 +94,17 @@ export function createWorld(seed) {
     [2020, 2020], [1000, 2440],
   ];
   for (const [x, y] of spots) packages.push({ x, y, taken: false });
-  const world = { seed, blocks, landmarks, packages, rng };
+  const world = { seed, blocks, landmarks, packages, pickups: buildPickups(rng), rng };
   return world;
+}
+
+// Respawn timer for supply crates, ticked from the main loop.
+export function updatePickups(world, dt) {
+  for (const pk of world.pickups) {
+    if (!pk.taken || pk.respawnT <= 0) continue;
+    pk.respawnT -= dt;
+    if (pk.respawnT <= 0) pk.taken = false;
+  }
 }
 
 export function isOnRoad(x, y) {

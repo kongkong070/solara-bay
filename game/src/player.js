@@ -1,6 +1,6 @@
 // The player on foot and behind the wheel: Marco "Rio" Vega, a driver new
 // to Solara Bay. Walk, sprint, steal cars, punch, shoot, get busted.
-import { PLAYER, WORLD } from './config.js';
+import { PLAYER, WORLD, PICKUPS } from './config.js';
 import { clamp, angleTo } from './random.js';
 import { collideBuildings, clampToWorld, isWater } from './world.js';
 import { nearestCar, driveCar, collideCars } from './vehicles.js';
@@ -109,6 +109,26 @@ export function updatePlayer(game, dt) {
       game.stats.packages += 1;
       game.floater(pack.x, pack.y, '+$250 package', '#e8d44f');
       game.audio.pickup();
+    }
+  }
+  // Collect supply crates: health, armour, ammo. They respawn after a minute.
+  for (const pk of game.world.pickups) {
+    if (!pk.taken && Math.hypot(pk.x - p.x, pk.y - p.y) < 28) {
+      pk.taken = true;
+      pk.respawnT = PICKUPS.respawnSeconds;
+      game.stats.pickups = (game.stats.pickups || 0) + 1;
+      if (pk.kind === 'health') {
+        p.health = Math.min(100, p.health + PICKUPS.health);
+        game.floater(pk.x, pk.y, '+' + PICKUPS.health + ' HP', '#7ae08a');
+      } else if (pk.kind === 'armor') {
+        p.armor = Math.min(100, p.armor + PICKUPS.armor);
+        game.floater(pk.x, pk.y, '+' + PICKUPS.armor + ' ARMOUR', '#7ab8e0');
+      } else {
+        p.reserveAmmo += PICKUPS.ammo;
+        game.floater(pk.x, pk.y, '+' + PICKUPS.ammo + ' AMMO', '#ffd76a');
+      }
+      game.audio.supply(pk.kind);
+      game.addParticles(pk.x, pk.y, 8, '#7ae08a');
     }
   }
 }

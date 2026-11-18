@@ -47,6 +47,23 @@ export function angleDiff(from, to) {
   return d;
 }
 
+// Fisher-Yates shuffle with the seeded rng: the same seed, same order.
+export function shuffle(rng, list) {
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
+}
+
+// Clamp to 0..1, for alpha and blend factors.
+export function clamp01(value) {
+  return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
 export function fmtCash(n) {
   return '$' + Math.round(n).toLocaleString('en-US');
 }

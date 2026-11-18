@@ -3,11 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Solara Bay — an open-world crime game. Steal cars, outrun the SBPD, run 8 story missions, and survive the night.">
 <title>Solara Bay — an open-world crime game</title>
 <style>
   html, body { margin: 0; padding: 0; background: #0a0e18; height: 100%; }
   body { display: flex; align-items: center; justify-content: center; }
   #wrap { position: relative; }
+  #hint {
+    position: absolute; right: 10px; bottom: 8px; z-index: 2;
+    font: 12px/1.5 sans-serif; color: rgba(255,255,255,0.75);
+    background: rgba(0,0,0,0.45); padding: 4px 10px; border-radius: 8px;
+    pointer-events: none;
+  }
   canvas {
     display: block;
     width: min(100vw, 177.78vh);
@@ -21,6 +28,7 @@
 <body>
 <div id="wrap">
   <canvas id="game" width="1280" height="720"></canvas>
+  <div id="hint">WASD move &middot; E car &middot; F punch &middot; M mission &middot; N / wheel zoom map</div>
 </div>
 <script type="module" src="./src/main.js"></script>
 </body>

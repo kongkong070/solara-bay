@@ -6,7 +6,7 @@ import { clamp, fmtCash, fmtClock } from './random.js';
 import { isOnRoad, buildingAt } from './world.js';
 import { currentStage, missionMarker } from './missions.js';
 
-const MINIMAP = 168;
+const MINIMAP_SIZES = [140, 168, 220]; // N key or mouse wheel cycles them
 
 export function createCamera() {
   return { x: 0, y: 0, zoom: 1 };
@@ -149,6 +149,30 @@ export function drawWorld(ctx, game) {
     ctx.fillStyle = '#8a6a2a';
     ctx.fillRect(pack.x - 8, pack.y - 2, 16, 4);
   }
+  // Supply crates: health (green cross), armour (blue vest), ammo (yellow).
+  for (const pk of game.world.pickups) {
+    if (pk.taken) continue;
+    const pulse = 0.6 + 0.4 * Math.sin(game.time * 3 + pk.y);
+    const color = pk.kind === 'health' ? '#7ae08a' : pk.kind === 'armor' ? '#7ab8e0' : '#ffd76a';
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.2 * pulse) + ')';
+    ctx.beginPath();
+    ctx.arc(pk.x, pk.y, 24 + pulse * 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#20242c';
+    ctx.fillRect(pk.x - 11, pk.y - 9, 22, 18);
+    ctx.fillStyle = color;
+    if (pk.kind === 'health') {
+      ctx.fillRect(pk.x - 3, pk.y - 7, 6, 14);
+      ctx.fillRect(pk.x - 7, pk.y - 3, 14, 6);
+    } else if (pk.kind === 'armor') {
+      ctx.fillRect(pk.x - 7, pk.y - 6, 14, 12);
+      ctx.fillStyle = '#20242c';
+      ctx.fillRect(pk.x - 7, pk.y - 1, 14, 3);
+    } else {
+      ctx.fillRect(pk.x - 6, pk.y - 2, 12, 4);
+      ctx.fillRect(pk.x - 2, pk.y - 6, 4, 12);
+    }
+  }
 }
 
 function drawCarShape(ctx, car) {
@@ -190,6 +214,12 @@ function drawCarShape(ctx, car) {
     ctx.font = 'bold 8px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('TAXI', 0, 3);
+  }
+  if (car.type === 'muscle') {
+    // Racing stripes down the hood of the Bandit Muscle.
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillRect(-w * 0.08, -h / 2 + 2, 4, h - 4);
+    ctx.fillRect(w * 0.08 - 4, -h / 2 + 2, 4, h - 4);
   }
   if (car.health < 55) {
     ctx.fillStyle = 'rgba(40,40,40,0.85)';
@@ -248,6 +278,11 @@ export function drawPeds(ctx, game) {
     ctx.beginPath();
     ctx.arc(Math.cos(ped.angle) * 4, Math.sin(ped.angle) * 4 - 4, 6, 0, Math.PI * 2);
     ctx.fill();
+    if (ped.jog) {
+      // Joggers wear a headband.
+      ctx.fillStyle = '#ff5a4a';
+      ctx.fillRect(-6, -10, 12, 3);
+    }
     if (ped.taxi && ped.state !== 'taxi') {
       ctx.fillStyle = '#e8d44f';
       ctx.font = 'bold 11px sans-serif';
@@ -430,6 +465,8 @@ export function drawHUD(ctx, game) {
   ctx.fillStyle = '#fff';
   ctx.font = '13px sans-serif';
   ctx.fillText('AMMO ' + p.ammo + '/' + p.reserveAmmo, 186, 92);
+  ctx.fillStyle = '#7ae08a';
+  ctx.fillText('SUPPLIES ' + (game.stats.pickups || 0), 186, 110);
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 13px sans-serif';
   ctx.fillText(fmtClock(game.clockMinutes), 186, 70);
@@ -520,7 +557,7 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
 }
 
 export function drawMinimap(ctx, game) {
-  const size = MINIMAP;
+  const size = MINIMAP_SIZES[game.minimapZoom || 0] || MINIMAP_SIZES[1];
   const x0 = VIEW.width - size - 14;
   const y0 = 14;
   const scale = size / WORLD.width;
@@ -564,6 +601,56 @@ export function drawMinimap(ctx, game) {
   if (game.taxi.active) blip(game.taxi.target.x, game.taxi.target.y, '#7ae08a', 5);
   for (const cop of game.police.cops) blip(cop.x, cop.y, '#ff5a4a', 4);
   for (const pack of game.world.packages) if (!pack.taken) blip(pack.x, pack.y, '#e8d44f', 3);
+  // Supply crates: health green, armour blue, ammo yellow.
+  for (const pk of game.world.pickups) {
+    if (pk.taken) continue;
+    blip(pk.x, pk.y, pk.kind === 'health' ? '#7ae08a' : pk.kind === 'armor' ? '#7ab8e0' : '#ffd76a', 3);
+  }
+  // Landmark dots with short labels, so the map teaches the city.
+  const landmarks = game.world.landmarks;
+  const labels = [
+    [landmarks.garage, 'Garage'], [landmarks.safehouse, 'Safehouse'],
+    [landmarks.docks, 'Docks'], [landmarks.penthouse, 'Penthouse'],
+    [landmarks.plaza, 'Plaza'], [landmarks.stadium, 'Stadium'],
+    [landmarks.nightclub, 'Palms'], [landmarks.beachBar, 'Beach Bar'],
+  ];
+  ctx.font = 'bold 9px sans-serif';
+  for (const [lm, label] of labels) {
+    const lx = x0 + lm.x * scale;
+    const ly = y0 + lm.y * scale;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Labels on the right half flip to the left so they stay inside the map.
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    if (lx > x0 + size * 0.62) {
+      ctx.textAlign = 'right';
+      ctx.fillText(label, lx - 4, ly + 3);
+      ctx.textAlign = 'left';
+    } else {
+      ctx.fillText(label, lx + 4, ly + 3);
+    }
+  }
+  // Viewport rectangle: what the main camera currently shows.
+  const cam = game.camera;
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(
+    x0 + (cam.x - VIEW.width / 2) * scale,
+    y0 + (cam.y - VIEW.height / 2) * scale,
+    VIEW.width * scale, VIEW.height * scale,
+  );
+  // North indicator: a small chip at the top-left corner of the map.
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.beginPath();
+  ctx.arc(x0 + 10, y0 + 10, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('N', x0 + 10, y0 + 14);
+  ctx.textAlign = 'left';
   // Player arrow.
   ctx.save();
   ctx.translate(x0 + game.player.x * scale, y0 + game.player.y * scale);
@@ -621,10 +708,10 @@ export function drawTitle(ctx, game) {
   ctx.font = '15px sans-serif';
   ctx.fillStyle = '#cfd8e8';
   ctx.fillText('WASD move / drive  •  E enter car  •  F punch  •  Mouse shoot', VIEW.width / 2, game.saveExists ? 414 : 384);
-  ctx.fillText('M start mission  •  P pause  •  C radio  •  Q mute', VIEW.width / 2, game.saveExists ? 440 : 410);
+  ctx.fillText('M start mission  •  P pause  •  C radio  •  Q mute  •  N / wheel zoom minimap', VIEW.width / 2, game.saveExists ? 440 : 410);
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 15px sans-serif';
-  ctx.fillText('6 story missions  •  taxi fares  •  12 hidden packages  •  5 wanted stars', VIEW.width / 2, game.saveExists ? 478 : 448);
+  ctx.fillText('8 story missions  •  taxi fares  •  12 hidden packages  •  10 supply crates  •  5 wanted stars', VIEW.width / 2, game.saveExists ? 478 : 448);
   ctx.font = '13px sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,0.6)';
   ctx.fillText('Progress saves automatically after each mission.', VIEW.width / 2, game.saveExists ? 510 : 478);
@@ -644,7 +731,7 @@ export function drawPause(ctx, game) {
   const m = game.missions;
   ctx.fillText('Missions done: ' + m.completed + ' / ' + m.list.length, VIEW.width / 2, 282);
   ctx.fillText('Cash: ' + fmtCash(game.player.cash) + '   •   Fares: ' + game.stats.fares + '   •   Packages: ' + game.stats.packages + '/12', VIEW.width / 2, 312);
-  ctx.fillText('Cars stolen: ' + game.stats.stolen + '   •   Best wanted: ' + game.stats.bestWanted + '★', VIEW.width / 2, 342);
+  ctx.fillText('Supplies: ' + (game.stats.pickups || 0) + '   •   Cars stolen: ' + game.stats.stolen + '   •   Best wanted: ' + game.stats.bestWanted + '★', VIEW.width / 2, 342);
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 17px sans-serif';
   ctx.fillText('P or Esc to resume  •  M next mission  •  Q mute', VIEW.width / 2, 392);
@@ -681,8 +768,8 @@ export function drawEnd(ctx, game, kind) {
   }
   ctx.fillStyle = '#cfd8e8';
   ctx.font = '16px sans-serif';
-  ctx.fillText('Cash: ' + fmtCash(game.player.cash) + '   •   Missions: ' + game.missions.completed + '/6   •   Packages: ' + game.stats.packages + '/12', VIEW.width / 2, 336);
-  ctx.fillText('Fares: ' + game.stats.fares + '   •   Cars stolen: ' + game.stats.stolen + '   •   Best wanted: ' + game.stats.bestWanted + '★', VIEW.width / 2, 364);
+  ctx.fillText('Cash: ' + fmtCash(game.player.cash) + '   •   Missions: ' + game.missions.completed + '/' + game.missions.list.length + '   •   Packages: ' + game.stats.packages + '/12', VIEW.width / 2, 336);
+  ctx.fillText('Fares: ' + game.stats.fares + '   •   Supplies: ' + (game.stats.pickups || 0) + '   •   Cars stolen: ' + game.stats.stolen + '   •   Best wanted: ' + game.stats.bestWanted + '★', VIEW.width / 2, 364);
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 18px sans-serif';
   ctx.fillText('Press ENTER to keep playing in free roam', VIEW.width / 2, 414);
@@ -697,4 +784,39 @@ export function drawSunsetGrade(ctx) {
   g.addColorStop(1, 'rgba(120,40,120,0.24)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+}
+
+// Night: a dark blue wash over the city, cut by the headlights of the car
+// the player drives. Drawn in screen space, after the world.
+export function drawNightGrade(ctx, game) {
+  ctx.fillStyle = 'rgba(8,12,34,0.42)';
+  ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  const p = game.player;
+  if (p.inCar) {
+    const sx = p.x - (game.camera.x - VIEW.width / 2);
+    const sy = p.y - (game.camera.y - VIEW.height / 2);
+    const g = ctx.createRadialGradient(sx, sy, 30, sx, sy, 260);
+    g.addColorStop(0, 'rgba(255,240,180,0.28)');
+    g.addColorStop(1, 'rgba(255,240,180,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 260, 0, Math.PI * 2);
+    ctx.fill();
+    // Headlight cone ahead of the car.
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(p.angle);
+    const cone = ctx.createLinearGradient(0, 0, 320, 0);
+    cone.addColorStop(0, 'rgba(255,244,190,0.30)');
+    cone.addColorStop(1, 'rgba(255,244,190,0)');
+    ctx.fillStyle = cone;
+    ctx.beginPath();
+    ctx.moveTo(0, -14);
+    ctx.lineTo(320, -90);
+    ctx.lineTo(320, 90);
+    ctx.lineTo(0, 14);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
 }

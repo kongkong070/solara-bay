@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/gta6-01/kongkong070/solara-bay/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/kongkong070/solara-bay/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-**Solara Bay** — an open-world crime game in the spirit of GTA 6, built from scratch in plain HTML5 Canvas and JavaScript. You are Rio Vega, a driver new to the sun-soaked coastal city of Solara Bay. Steal cars, outrun the SBPD, run six story missions for Lena Cruz, drive taxi fares, and hunt 12 hidden cash packages — all offline, in your browser, with no build step and no network requests.
+**Solara Bay** — an open-world crime game in the spirit of GTA 6, built from scratch in plain HTML5 Canvas and JavaScript. You are Rio Vega, a driver new to the sun-soaked coastal city of Solara Bay. Steal cars, outrun the SBPD, run eight story missions for Lena Cruz, drive taxi fares, and hunt 12 hidden cash packages — all offline, in your browser, with no build step and no network requests. The city now runs a full day/night cycle: after 19:00 the streets go dark and your headlights cut the night.
 
 ## Run it
 
@@ -27,22 +27,24 @@ Or open `game/index.html` through any static server. The game is only static fil
 | Shift | Sprint |
 | M | Start the next story mission |
 | C | Change radio station (while driving) |
+| N / mouse wheel | Zoom the minimap |
 | P / Esc | Pause |
 | Q | Mute |
 
 ## What's in the city
 
 - **Open world**: a 3400×2600 coastal grid city — avenues, parks, a beach with a pier, docks, a stadium and a marina, with traffic and pedestrians living their own lives.
-- **Driving**: arcade car physics with drift and handbrake; sedans, taxis, sports cars, trucks, vans and coupes to steal and drive.
-- **Wanted system**: five stars. Steal a car, hit a pedestrian or open fire and the SBPD sends interceptors and foot cops; hide to cool the heat, or get busted.
-- **Story**: six missions — *Welcome to Solara*, *Wheels Up*, *Special Delivery*, *The Getaway*, *Harbor Heist* and *King of Solara* — with timers, chases and a finale at the Marina Penthouse.
-- **Side work**: taxi fares and 12 hidden cash packages worth $250 each.
-- **HUD**: wanted stars, cash, health and armour, ammo, clock, speedometer, radio, objective banner and a live minimap with mission, police and fare blips.
-- **Feel**: synthesised WebAudio sound — engine hum, sirens, gunshots and three radio stations — plus particles, skid feedback and a save that continues your run.
+- **Driving**: arcade car physics with drift and handbrake; sedans, taxis, sports cars, trucks, vans, coupes and the new Bandit Muscle to steal and drive.
+- **Wanted system**: five stars. Steal a car, hit a pedestrian or open fire and the SBPD sends interceptors and foot cops; hide to cool the heat, or get busted. Rebalanced: heat builds slower (26 per crime), a star cools off after 7 seconds hidden instead of 9, and high wanted levels send up to three foot cops.
+- **Story**: eight missions — *Welcome to Solara*, *Wheels Up*, *Special Delivery*, *The Getaway*, *Harbor Heist*, *King of Solara*, plus the new *Beach Party* (a timed crate run on the sand) and *Midnight Ledger* (a night drive to the Penthouse with the SBPD already on you) — with timers, chases and a finale at the Marina Penthouse.
+- **Side work**: taxi fares, 12 hidden cash packages worth $250 each, and 10 supply crates — health, armour and ammo — that respawn after a minute.
+- **Day and night**: the in-game clock drives the lighting. Golden hour from 17:30, full night from 19:00 until 06:00, with headlights and a light cone while you drive.
+- **HUD**: wanted stars, cash, health and armour, ammo, clock, speedometer, radio, objective banner and a live minimap with mission, police, fare, package and supply blips, landmark labels, a viewport rectangle, a north indicator, and three zoom levels (N or mouse wheel).
+- **Feel**: synthesised WebAudio sound — engine hum, sirens that climb with your wanted level, gunshots and four radio stations — plus particles, skid feedback and a save that continues your run.
 
 ## Screenshots
 
-The four screenshots in `screenshots/` are real renders of the game itself, staged deterministically with `?shot=chase|mission|start|night` (see `shots.json` and `game/src/shots.js`).
+The four screenshots in `screenshots/` are real renders of the game itself, staged deterministically with `?shot=chase|mission|start|ledger` (see `shots.json` and `game/src/shots.js`). The `night` scene still exists in `shots.js` for the golden-hour beach shot.
 
 ## Structure
 

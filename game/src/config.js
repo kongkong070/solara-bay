@@ -33,15 +33,40 @@ export const CAR = {
   drag: 0.55,
 };
 
+// Health crates (+40 HP), armour vests (+25) and ammo boxes (+24 reserve)
+// scattered around the city. They respawn 60 s after being picked up.
+export const PICKUPS = {
+  health: 40,
+  armor: 25,
+  ammo: 24,
+  respawnSeconds: 60,
+};
+
+// Day/night cycle, driven by the in-game clock in main.js.
+export const LIGHTING = {
+  sunsetStart: 17 * 60 + 30, // 17:30 golden hour begins
+  nightStart: 19 * 60, // 19:00 the city goes dark
+  nightEnd: 6 * 60, // 06:00 dawn breaks
+};
+
 // Wanted stars: 0 calm .. 5 army of police. Police response grows with the level.
+// Revision: heat builds slower (26 per crime instead of 34) so one mistake
+// does not snowball, but high wanted levels now send more foot cops.
 export const WANTED = [
   { cops: 0, copSpeed: 0, label: 'Clean' },
-  { cops: 1, copSpeed: 330, label: 'One star' },
-  { cops: 2, copSpeed: 370, label: 'Two stars' },
-  { cops: 3, copSpeed: 410, label: 'Three stars' },
-  { cops: 4, copSpeed: 450, label: 'Four stars' },
-  { cops: 5, copSpeed: 490, label: 'Five stars' },
+  { cops: 1, copSpeed: 320, label: 'One star' },
+  { cops: 2, copSpeed: 355, label: 'Two stars' },
+  { cops: 3, copSpeed: 390, label: 'Three stars' },
+  { cops: 4, copSpeed: 430, label: 'Four stars' },
+  { cops: 5, copSpeed: 470, label: 'Five stars' },
 ];
+
+export const POLICE_TUNING = {
+  heatPerCrime: 26, // was 34: ~4 crimes to gain a star, not 3
+  calmSeconds: 7, // was 9: hiding drops a star sooner
+  footCopCap: [0, 0, 2, 2, 3, 3], // by wanted level; was capped at 2
+  spawnInterval: 2.2, // was 2.5 s between interceptor spawns
+};
 
 export const ECONOMY = {
   startCash: 150,

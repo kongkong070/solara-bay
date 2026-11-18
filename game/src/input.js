@@ -8,12 +8,15 @@ export function createInput(canvas) {
     pressed: new Set(),
     mouse: { x: 0, y: 0, down: false, clicked: false },
     anyKey: false,
+    wheelY: 0, // accumulated mouse-wheel delta; the game consumes it
+    lastKey: '', // most recent key pressed, for hints and the autopilot
   };
   const down = (e) => {
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (!input.keys.has(key)) input.pressed.add(key);
     input.keys.add(key);
     input.anyKey = true;
+    input.lastKey = key;
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
   };
   const up = (e) => input.keys.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key);
@@ -33,6 +36,11 @@ export function createInput(canvas) {
     input.mouse.y = (e.clientY - rect.top) * (canvas.height / rect.height);
   });
   window.addEventListener('mouseup', () => { input.mouse.down = false; });
+  // Wheel zooms the minimap (N cycles it too); the game reads wheelY.
+  canvas.addEventListener('wheel', (e) => {
+    input.wheelY += e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
   return input;
 }
 

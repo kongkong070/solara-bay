@@ -5,12 +5,14 @@
 // screenshots/ from beside this file to /output and writes
 // /output/dossier.json, the summary the judge reads, with the vendored
 // make.fun library (vendor/makefun-game.ts, the kit's copy, unchanged).
+// Eight story missions, a day/night cycle with headlights, supply crates,
+// a labelled zoomable minimap and a rebalanced wanted system.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -22,6 +24,15 @@ mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+
+// shots.json is the source of truth for the four screenshots: every file it
+// names must exist, so a renamed scene cannot silently ship a stale frame.
+const shots = JSON.parse(readFileSync(join(here, 'shots.json'), 'utf8'));
+for (const shot of shots) {
+  if (!existsSync(join(here, 'screenshots', shot.name))) {
+    throw new Error('shots.json names ' + shot.name + ' but screenshots/' + shot.name + ' is missing');
+  }
+}
 
 // The scorer's own caps (reference/gate.json): only text_max_bytes shapes the
 // bytes; the others refuse an entry the scorer would refuse (more than 4
@@ -38,3 +49,4 @@ writeFileSync(
     game_path_max_bytes: 1000,
   }),
 );
+console.log('Solara Bay: ' + shots.length + ' screenshots checked, dossier written to ' + out);
