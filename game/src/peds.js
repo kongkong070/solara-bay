@@ -1,8 +1,8 @@
-// Pedestrians: they stroll the sidewalks, flee from gunfire and police
-// chases, and a few of them want a taxi.
+// Pedestrians: they stroll the sidewalks and the beach, run from gunfire
+// and police chases, and a few of them are looking for a taxi.
 import { WORLD } from './config.js';
 import { clamp, dist } from './util.js';
-import { hitsBuilding, clampToWorld, insideWorld } from './world.js';
+import { hitsBuilding, clampToWorld } from './world.js';
 
 const SHIRTS = ['#d85a5a', '#5a8ad8', '#5ad88a', '#d8c95a', '#a05ad8', '#d88a5a', '#5ad8c9', '#e8e8e8'];
 
@@ -29,17 +29,21 @@ export function makePed(rng, x, y) {
 
 export function spawnPeds(game, count) {
   for (let i = 0; i < count; i++) {
+    // Most peds walk the city; a few stroll the beach.
+    const onBeach = game.rng.chance(0.15);
     const x = game.rng.range(120, WORLD.width - 120);
-    const y = game.rng.range(120, WORLD.beachTop - 60);
+    const y = onBeach
+      ? game.rng.range(WORLD.beachTop + 30, WORLD.seaTop - 40)
+      : game.rng.range(120, WORLD.beachTop - 60);
     if (hitsBuilding(game.world, x, y, 14)) continue;
     const ped = makePed(game.rng, x, y);
-    // One in eight pedestrians is looking for a cab.
+    // About one in eight pedestrians wants a cab.
     ped.wantsTaxi = game.rng.chance(0.12);
     game.peds.push(ped);
   }
 }
 
-// A pedestrian picks a new nearby spot to stroll toward.
+// Pick a fresh nearby spot for a pedestrian to stroll toward.
 function pickStrollTarget(game, ped) {
   const a = game.rng.range(0, Math.PI * 2);
   const d = game.rng.range(60, 260);
@@ -54,12 +58,16 @@ export function updatePeds(game, dt) {
     if (ped.dead) continue;
     ped.px = ped.x;
     ped.py = ped.y;
-    // Flee from gunfire, speeding cars and nearby police chases.
+    // Run from gunfire, speeding cars, police chases and boats tearing
+    // past the shore.
     let danger = null;
     if (game.recentShot && dist(ped.x, ped.y, game.recentShot.x, game.recentShot.y) < 320) {
       danger = game.recentShot;
-    } else if (player.inCar && player.inCar.speed > 260 &&
+    } else if (player.inCar && Math.abs(player.inCar.speed) > 260 &&
       dist(ped.x, ped.y, player.x, player.y) < 200) {
+      danger = player;
+    } else if (player.inBoat && Math.abs(player.inBoat.speed) > 200 &&
+      dist(ped.x, ped.y, player.x, player.y) < 220) {
       danger = player;
     } else if (game.police.wanted > 0 && dist(ped.x, ped.y, player.x, player.y) < 160) {
       danger = player;
@@ -101,7 +109,7 @@ export function updatePeds(game, dt) {
   }
 }
 
-// Knock a pedestrian down (a punch or a car hit). Returns the ped.
+// Knock a pedestrian down with a punch or a car. Returns the ped.
 export function knockDown(game, ped) {
   ped.state = 'down';
   ped.dead = false;

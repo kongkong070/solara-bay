@@ -12,6 +12,8 @@ const STATION_TUNES = [
   [[72, 0.5], [74, 0.5], [76, 1], [79, 1], [76, 0.5], [74, 0.5], [72, 2]],
   // NIGHT DRIVE — moody synth line.
   [[57, 1.5], [60, 1], [63, 1], [65, 1.5], [63, 1], [60, 2]],
+  // TIDE POOL — dreamy, slow, a little wistful.
+  [[64, 1.5], [67, 1], [71, 1], [69, 1.5], [67, 1], [64, 2]],
 ];
 
 function midiToFreq(midi) {
@@ -46,7 +48,8 @@ export function createAudio() {
     audio.master = ctx.createGain();
     audio.master.gain.value = 0.5;
     audio.master.connect(ctx.destination);
-    // Engine hum: a low sawtooth whose pitch follows speed.
+    // Engine hum: a low sawtooth whose pitch follows speed. Boats use
+    // the same voice — the water just makes it throb a little slower.
     audio.engineOsc = ctx.createOscillator();
     audio.engineOsc.type = 'sawtooth';
     audio.engineOsc.frequency.value = 55;
@@ -164,6 +167,14 @@ export function createAudio() {
   audio.cash = function cash() {
     blip(1046, 0.1, 'sine', 0.12);
     blip(1568, 0.18, 'sine', 0.1, 0.07);
+  };
+
+  // Helicopter rotor: a slow chopped thump that says "your ride is here".
+  audio.heli = function heli() {
+    for (let i = 0; i < 6; i++) {
+      blip(70, 0.12, 'sine', 0.18, i * 0.16);
+      blip(52, 0.12, 'sine', 0.14, i * 0.16 + 0.07);
+    }
   };
 
   audio.nextStation = function nextStation() {

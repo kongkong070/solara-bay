@@ -1,10 +1,11 @@
-// Deterministic screenshot staging: ?shot=chase|mission|start|night
+// Deterministic screenshot staging: ?shot=chase|mission|start|night|boat
 // puts the game into a scene the judge can read at a glance, then flips
 // window.__shotReady so the shot tool knows the frame is ready.
 import { WORLD } from './config.js';
 import { makeRng } from './util.js';
 import { randomRoadPoint } from './world.js';
 import { makeCar } from './vehicles.js';
+import { makeBoat } from './boats.js';
 import { setWanted } from './police.js';
 
 export function stageShot(game) {
@@ -69,6 +70,22 @@ export function stageShot(game) {
     player.y = car.y;
     setWanted(game, 2);
     game.addMessage('Night run — keep the headlights on the road.');
+  } else if (shot === 'boat') {
+    // Rio at the helm of a speedboat off Sunset Pier at golden hour,
+    // running the Bay Runner buoys with one star on his tail.
+    game.state = 'playing';
+    game.clockMinutes = 17 * 60 + 45;
+    player.cash = 1450;
+    const boat = makeBoat(game.rng, 'speedboat', 1720, 2660, -Math.PI / 2);
+    boat.driver = 'player';
+    game.boats.push(boat);
+    player.inBoat = boat;
+    player.x = boat.x;
+    player.y = boat.y;
+    boat.speed = 260;
+    game.missions.index = 6;
+    game.startMission();
+    game.addMessage('Bay Runner — round the buoys!');
   }
   // Let one frame render, then declare the shot ready.
   requestAnimationFrame(() => {

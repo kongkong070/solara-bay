@@ -1,9 +1,10 @@
 // Story missions, taxi fares, hidden cash packages and supply crates.
 // Lena Cruz hands Rio Vega the jobs; each one pays in cash.
-import { WORLD, TUNING } from './config.js';
+import { WORLD, TUNING, BUOYS } from './config.js';
 import { clamp, dist } from './util.js';
 import { randomRoadPoint } from './world.js';
 import { setWanted } from './police.js';
+import { nearestBoatOfType } from './boats.js';
 
 const STORY = [
   {
@@ -65,6 +66,28 @@ const STORY = [
       { kind: 'survive', seconds: 30, wanted: 3, text: 'Hold the block — survive 30 seconds' },
     ],
   },
+  {
+    id: 'bay-runner',
+    name: 'Bay Runner',
+    brief: 'A package for the far side of the bay. Take a speedboat from the marina, round all three buoys, then bring her home to Sunset Pier.',
+    reward: 600,
+    steps: [
+      { kind: 'inBoat', type: 'speedboat', text: 'Take a speedboat from the marina' },
+      { kind: 'buoyRun', seconds: 85, text: 'Round the buoys (0/3)' },
+      { kind: 'goto', x: 1720, y: 2520, r: 100, text: 'Bring the boat home to Sunset Pier' },
+    ],
+  },
+  {
+    id: 'skyline',
+    name: 'Skyline Escape',
+    brief: 'The city wants you gone. Reach Bay Stadium, hold the block at four stars, and catch Lena\'s helicopter out.',
+    reward: 1200,
+    steps: [
+      { kind: 'goto', x: 2800, y: 1520, r: 90, text: 'Reach Bay Stadium' },
+      { kind: 'survive', seconds: 20, wanted: 4, text: 'Hold the block — survive 20 seconds' },
+      { kind: 'heli', x: 2800, y: 1520, text: 'Board the helicopter' },
+    ],
+  },
 ];
 
 export function makeMissions(game) {
@@ -80,6 +103,8 @@ export function makeMissions(game) {
     earned: 0,
     faresDone: 0,
     packagesFound: 0,
+    boatsRidden: 0,
+    heliFlown: 0,
   };
   // Twelve hidden cash packages scattered across the city and the beach.
   for (let i = 0; i < 12; i++) {
@@ -111,6 +136,7 @@ export function startNextMission(game) {
     timer: null,
     collected: [],
     points: [],
+    buoys: [],
     surviveLeft: 0,
   };
   prepareStep(game, missions.active);
@@ -139,12 +165,28 @@ function prepareStep(game, active) {
     }
     active.collected = [];
   }
+  if (step.kind === 'buoyRun') {
+    active.buoys = BUOYS.map((b) => ({ x: b.x, y: b.y, taken: false }));
+    active.timer = step.seconds * game.diff.missionTime;
+  }
   if (step.kind === 'survive') {
     active.surviveLeft = step.seconds;
     setWanted(game, step.wanted || 2);
   }
   if (step.kind === 'wantedAtLeast') {
     setWanted(game, step.n);
+  }
+  if (step.kind === 'heli') {
+    // Lena's helicopter comes in over the stadium and sets down.
+    game.heli = {
+      x: step.x, y: step.y,
+      angle: 0,
+      state: 'landing', // 'landing' | 'landed' | 'boarding' | 'gone'
+      altitude: 1,
+      timer: 0,
+    };
+    game.addMessage('The helicopter is coming in — get to the pad!');
+    game.audio.heli();
   }
 }
 
@@ -153,6 +195,10 @@ function stepText(active) {
   if (!step) return '';
   if (step.kind === 'collect') {
     return step.text.replace('(0/3)', '(' + active.collected.length + '/' + step.count + ')');
+  }
+  if (step.kind === 'buoyRun') {
+    const hit = active.buoys.filter((b) => b.taken).length;
+    return step.text.replace('(0/3)', '(' + hit + '/' + active.buoys.length + ')');
   }
   return step.text;
 }
@@ -170,8 +216,12 @@ export function currentObjective(game) {
       const next = active.points.find((p) => !p.taken);
       if (next) return { x: next.x, y: next.y, text: stepText(active) };
     }
+    if (step.kind === 'buoyRun') {
+      const next = active.buoys.find((b) => !b.taken);
+      if (next) return { x: next.x, y: next.y, text: stepText(active) };
+    }
     if (step.kind === 'inCar') {
-      // Point at the nearest sports car.
+      // Point at the nearest car of the wanted type.
       let best = null;
       let bestD = Infinity;
       for (const car of game.cars) {
@@ -180,6 +230,13 @@ export function currentObjective(game) {
         if (d < bestD) { bestD = d; best = car; }
       }
       if (best) return { x: best.x, y: best.y, text: stepText(active) };
+    }
+    if (step.kind === 'inBoat') {
+      const boat = nearestBoatOfType(game, step.type, game.player.x, game.player.y);
+      if (boat) return { x: boat.x, y: boat.y, text: stepText(active) };
+    }
+    if (step.kind === 'heli' && game.heli) {
+      return { x: game.heli.x, y: game.heli.y, text: stepText(active) };
     }
     return { x: game.player.x, y: game.player.y, text: stepText(active) };
   }
@@ -235,6 +292,20 @@ export function updateMissions(game, dt) {
       }
     } else if (step.kind === 'inCar') {
       if (player.inCar && player.inCar.type === step.type) done = true;
+    } else if (step.kind === 'inBoat') {
+      if (player.inBoat && (!step.type || player.inBoat.type === step.type)) {
+        missions.boatsRidden += 1;
+        done = true;
+      }
+    } else if (step.kind === 'buoyRun') {
+      for (const b of active.buoys) {
+        if (!b.taken && dist(player.x, player.y, b.x, b.y) < 52) {
+          b.taken = true;
+          game.audio.chime();
+          game.addMessage('Buoy ' + active.buoys.filter((x) => x.taken).length + ' of ' + active.buoys.length + '!');
+        }
+      }
+      if (active.buoys.every((b) => b.taken)) done = true;
     } else if (step.kind === 'collect') {
       for (const p of active.points) {
         if (!p.taken && dist(player.x, player.y, p.x, p.y) < 42) {
@@ -251,6 +322,11 @@ export function updateMissions(game, dt) {
     } else if (step.kind === 'survive') {
       active.surviveLeft -= dt;
       if (active.surviveLeft <= 0) done = true;
+    } else if (step.kind === 'heli') {
+      if (game.heli && game.heli.state === 'gone') {
+        missions.heliFlown += 1;
+        done = true;
+      }
     }
     if (done) {
       active.stepIdx += 1;
@@ -295,6 +371,29 @@ export function updateMissions(game, dt) {
   }
 
   updateFare(game, dt);
+}
+
+// The extraction helicopter: it lands, waits for Rio, then climbs away.
+export function updateHeli(game, dt) {
+  const heli = game.heli;
+  if (!heli) return;
+  if (heli.state === 'landing') {
+    heli.altitude -= dt * 0.5;
+    heli.angle += dt * 0.4;
+    if (heli.altitude <= 0) {
+      heli.altitude = 0;
+      heli.state = 'landed';
+      game.addMessage('The helicopter is down — get aboard!');
+    }
+  } else if (heli.state === 'boarding') {
+    heli.timer += dt;
+    heli.altitude += dt * 0.35;
+    if (heli.timer >= 3) {
+      heli.state = 'gone';
+      game.player.inHeli = null;
+      game.addMessage('You are clear of Solara Bay!');
+    }
+  }
 }
 
 // Taxi fares: a pedestrian who wants a cab flags you down; drive them

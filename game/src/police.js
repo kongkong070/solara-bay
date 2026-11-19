@@ -2,7 +2,7 @@
 // that ram you and foot cops who chase you down on foot.
 import { WORLD, TUNING } from './config.js';
 import { clamp, dist } from './util.js';
-import { randomRoadPoint, clampToWorld, hitsBuilding } from './world.js';
+import { randomRoadPoint, clampToWorld, hitsBuilding, nearestShore } from './world.js';
 import { makeCar, driveCar, collideCars } from './vehicles.js';
 import { hurtPlayer } from './player.js';
 
@@ -43,18 +43,28 @@ export function setWanted(game, stars) {
   police.bestWanted = Math.max(police.bestWanted, police.wanted);
 }
 
+// How far a unit can be and still have eyes on the player. Cops on the
+// shore cannot see Rio out on the water, so the bay is a hiding place —
+// but only while the heat is low.
+function canSeePlayer(game, unit, range) {
+  const player = game.player;
+  if (dist(unit.x, unit.y, player.x, player.y) >= range) return false;
+  if (player.inBoat && dist(unit.x, unit.y, player.x, player.y) > 260) return false;
+  return true;
+}
+
 export function updatePolice(game, dt) {
   const police = game.police;
   const player = game.player;
   if (player.dead) return;
 
-  // Are any cops close enough to see the player?
+  // Does anyone have eyes on the player right now?
   let seen = false;
   for (const cop of police.cops) {
-    if (!cop.down && dist(cop.x, cop.y, player.x, player.y) < 420) seen = true;
+    if (!cop.down && canSeePlayer(game, cop, 420)) seen = true;
   }
   for (const car of police.cars) {
-    if (!car.dead && dist(car.x, car.y, player.x, player.y) < 520) seen = true;
+    if (!car.dead && canSeePlayer(game, car, 520)) seen = true;
   }
   if (police.wanted > 0 && !seen) {
     police.calmTimer += dt;
@@ -68,10 +78,11 @@ export function updatePolice(game, dt) {
     police.calmTimer = 0;
   }
 
-  // Spawn interceptors and foot cops to match the wanted level.
+  // Spawn interceptors and foot cops to match the wanted level. At four
+  // stars and up the SBPD answers faster and the interceptors run hotter.
   police.spawnTimer -= dt;
   if (police.wanted > 0 && police.spawnTimer <= 0) {
-    police.spawnTimer = 2.2;
+    police.spawnTimer = police.wanted >= 4 ? TUNING.copSpawnSecondsHot : TUNING.copSpawnSeconds;
     const wantCars = Math.min(police.wanted, 3);
     const liveCars = police.cars.filter((c) => !c.dead).length;
     if (liveCars < wantCars) spawnInterceptor(game);
@@ -103,19 +114,31 @@ export function updatePolice(game, dt) {
   }
   police.cars = police.cars.filter((c) => !c.dead && dist(c.x, c.y, player.x, player.y) < 1600);
 
-  // Foot cops run the player down.
+  // Foot cops run the player down — but they wait at the shore when Rio
+  // is out on the water.
   for (const cop of police.cops) {
     if (cop.down) {
       cop.downTimer -= dt;
       if (cop.downTimer <= 0) cop.down = false;
       continue;
     }
+    if (player.inBoat) {
+      // Hold the nearest shore point and wait him out.
+      const shore = nearestShore(game.world, player.x, player.y);
+      const dx = shore.x - cop.x;
+      const dy = shore.y - cop.y;
+      const d = Math.hypot(dx, dy) || 1;
+      cop.x += (dx / d) * cop.speed * dt;
+      cop.y += (dy / d) * cop.speed * dt;
+      cop.angle = Math.atan2(dy, dx);
+      clampToWorld(cop, 24);
+      continue;
+    }
     const dx = player.x - cop.x;
     const dy = player.y - cop.y;
     const d = Math.hypot(dx, dy) || 1;
-    const chaseSpeed = cop.speed;
-    cop.x += (dx / d) * chaseSpeed * dt;
-    cop.y += (dy / d) * chaseSpeed * dt;
+    cop.x += (dx / d) * cop.speed * dt;
+    cop.y += (dy / d) * cop.speed * dt;
     cop.angle = Math.atan2(dy, dx);
     clampToWorld(cop, 24);
     // A cop on top of the player on foot starts the bust.
@@ -126,7 +149,7 @@ export function updatePolice(game, dt) {
       }
     }
   }
-  if (police.cops.every((c) => c.down || dist(c.x, c.y, player.x, player.y) >= 30 || player.inCar)) {
+  if (police.cops.every((c) => c.down || dist(c.x, c.y, player.x, player.y) >= 30 || player.inCar || player.inBoat)) {
     police.bustTimer = 0;
   }
   police.cops = police.cops.filter((c) => dist(c.x, c.y, player.x, player.y) < 1400 || c.down);
@@ -136,7 +159,9 @@ function spawnInterceptor(game) {
   const p = randomRoadPoint(game.rng, game.world, game.player.x, game.player.y, 500);
   const car = makeCar(game.rng, 'police', p.x, p.y, 0);
   car.driver = 'police';
-  car.spec = { ...car.spec, top: car.spec.top * (game.diff.label === 'Hardcore' ? 1.12 : 1) };
+  const hot = game.police.wanted >= 4 ? TUNING.interceptorHotBoost : 1;
+  const hardcore = game.diff.label === 'Hardcore' ? 1.12 : 1;
+  car.spec = { ...car.spec, top: car.spec.top * hardcore * hot };
   game.cars.push(car);
   game.police.cars.push(car);
 }
@@ -166,6 +191,13 @@ export function bustPlayer(game) {
   if (player.inCar) {
     player.inCar.driver = null;
     player.inCar = null;
+  }
+  if (player.inBoat) {
+    player.inBoat.driver = null;
+    player.inBoat = null;
+  }
+  if (player.inHeli) {
+    player.inHeli = null;
   }
   // Woken up at the hospital, clean slate.
   player.x = 1000;

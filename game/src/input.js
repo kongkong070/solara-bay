@@ -5,16 +5,14 @@ export function createInput(canvas) {
   const pressed = new Set();
   const mouse = { x: 0, y: 0, down: false, clicked: false, wheelY: 0 };
 
-  const codeOf = (e) => e.code;
-
   window.addEventListener('keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(e.code)) {
       e.preventDefault();
     }
-    if (!e.repeat) pressed.add(codeOf(e));
-    keys.add(codeOf(e));
+    if (!e.repeat) pressed.add(e.code);
+    keys.add(e.code);
   });
-  window.addEventListener('keyup', (e) => keys.delete(codeOf(e)));
+  window.addEventListener('keyup', (e) => keys.delete(e.code));
   window.addEventListener('blur', () => {
     keys.clear();
     mouse.down = false;

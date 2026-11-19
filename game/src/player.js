@@ -1,9 +1,10 @@
-// Rio Vega, on foot and behind the wheel: movement, stealing cars,
-// punching, shooting, health and armour.
+// Rio Vega, on foot, behind the wheel and at the helm: walking,
+// stealing cars and boats, punching, shooting, health and armour.
 import { WORLD, TUNING } from './config.js';
 import { clamp, dist } from './util.js';
-import { hitsBuilding, slideOutOfBuildings, clampToWorld, isOnRoad } from './world.js';
+import { hitsBuilding, slideOutOfBuildings, clampToWorld, isInWater, isOnDock, nearestShore } from './world.js';
 import { nearestCar, collideCars, driveCar } from './vehicles.js';
+import { nearestBoat, driveBoat } from './boats.js';
 import { knockDown } from './peds.js';
 
 export function makePlayer(x, y, cash) {
@@ -19,6 +20,8 @@ export function makePlayer(x, y, cash) {
     cash,
     ammo: TUNING.startAmmo,
     inCar: null,
+    inBoat: null,
+    inHeli: null,
     aimX: x,
     aimY: y,
     punchTimer: 0,
@@ -28,8 +31,7 @@ export function makePlayer(x, y, cash) {
   };
 }
 
-// Step the player for one frame. `input` is the input module, `game` the
-// whole game object.
+// Step the player for one frame. `game` is the whole game object.
 export function updatePlayer(game, dt) {
   const player = game.player;
   const input = game.input;
@@ -40,6 +42,19 @@ export function updatePlayer(game, dt) {
   player.shootTimer = Math.max(0, player.shootTimer - dt);
   player.reloadTimer = Math.max(0, player.reloadTimer - dt);
 
+  if (player.inHeli) {
+    // Riding the extraction helicopter: Rio goes where it goes.
+    const heli = player.inHeli;
+    player.x = heli.x;
+    player.y = heli.y;
+    player.angle = heli.angle;
+    player.speed = 0;
+    return;
+  }
+  if (player.inBoat) {
+    updateBoating(game, dt);
+    return;
+  }
   if (player.inCar) {
     updateDriving(game, dt);
     return;
@@ -54,6 +69,12 @@ export function updatePlayer(game, dt) {
   player.speed = (mv.x !== 0 || mv.y !== 0) ? speed : 0;
   slideOutOfBuildings(game.world, player, player.radius);
   clampToWorld(player, 24);
+  // Rio cannot wade into the sea — the pier and the marina jetty are
+  // the only dry ways over the water.
+  if (isInWater(player.x, player.y) && !isOnDock(game.world, player.x, player.y)) {
+    player.x = player.px;
+    player.y = player.py;
+  }
 
   // Aim at the mouse (screen space -> world space via the camera).
   const cam = game.camera;
@@ -80,9 +101,9 @@ export function updatePlayer(game, dt) {
     player.reloadTimer = 1.1;
     player.ammo = TUNING.startAmmo;
   }
-  // Enter or exit a car.
+  // Enter a car, a boat, or the waiting helicopter.
   if (input.wasPressed('KeyE')) {
-    tryEnterCar(game);
+    tryEnterVehicle(game);
   }
 }
 
@@ -116,15 +137,15 @@ function updateDriving(game, dt) {
   if (handbrake && Math.abs(car.speed) > 120 && game.rng.next() < 0.5) {
     game.addParticles(car.x - Math.cos(car.angle) * 20, car.y - Math.sin(car.angle) * 20, 1, '#bbbbbb');
   }
-  // Exit the car.
+  // Step out of the car.
   if (input.wasPressed('KeyE')) {
     exitCar(game);
   }
-  // Radio station.
+  // Change the radio station.
   if (input.wasPressed('KeyC')) {
     game.audio.nextStation();
   }
-  // Hitting pedestrians while driving counts as a crime.
+  // Running a pedestrian over while driving counts as a crime.
   for (const ped of game.peds) {
     if (ped.state === 'down') continue;
     if (dist(ped.x, ped.y, car.x, car.y) < 30 && Math.abs(car.speed) > 60) {
@@ -135,14 +156,73 @@ function updateDriving(game, dt) {
   }
 }
 
-function tryEnterCar(game) {
+// At the helm: throttle, steer, and step back onto dry land.
+function updateBoating(game, dt) {
   const player = game.player;
+  const input = game.input;
+  const boat = player.inBoat;
+  const mv = input.moveVector();
+  const throttle = mv.y < 0 ? 1 : mv.y > 0 ? -0.6 : 0;
+  const steer = mv.x;
+  driveBoat(boat, dt, throttle, steer);
+  player.x = boat.x;
+  player.y = boat.y;
+  player.px = boat.x;
+  player.py = boat.y;
+  player.angle = boat.angle;
+  player.speed = Math.abs(boat.speed);
+  // Spray when the boat is really moving.
+  if (Math.abs(boat.speed) > 200 && game.rng.next() < 0.4) {
+    game.addParticles(
+      boat.x - Math.cos(boat.angle) * 26 + game.rng.range(-10, 10),
+      boat.y - Math.sin(boat.angle) * 26 + game.rng.range(-10, 10),
+      1, '#ffffff',
+    );
+  }
+  // Step off onto the nearest shore.
+  if (input.wasPressed('KeyE')) {
+    exitBoat(game);
+  }
+  // The radio plays on the water too.
+  if (input.wasPressed('KeyC')) {
+    game.audio.nextStation();
+  }
+  game.audio.setEngine(Math.abs(boat.speed) / (TUNING.boatMaxSpeed * 1.3), true);
+}
+
+function tryEnterVehicle(game) {
+  const player = game.player;
+  // The extraction helicopter takes priority when it is waiting.
+  if (game.heli && game.heli.state === 'landed' &&
+    dist(player.x, player.y, game.heli.x, game.heli.y) < 80) {
+    player.inHeli = game.heli;
+    game.heli.state = 'boarding';
+    game.heli.timer = 0;
+    game.addMessage('You are aboard — hold on!');
+    game.audio.select();
+    return;
+  }
   const car = nearestCar(game, player.x, player.y, 64);
-  if (!car) return;
+  if (car) {
+    enterCar(game, car);
+    return;
+  }
+  const boat = nearestBoat(game, player.x, player.y, 80);
+  if (boat) {
+    player.inBoat = boat;
+    boat.driver = 'player';
+    game.addMessage('You took the ' + boat.spec.name + '. The bay is yours.');
+    game.audio.select();
+  }
+}
+
+function enterCar(game, car) {
+  const player = game.player;
   player.inCar = car;
   if (car.driver !== 'player') {
-    // Stealing a car the driver owned is a crime; parked cars are free
-    // pickings only when nobody sits in them.
+    // Stealing a car someone was driving is a crime; a parked car with
+    // nobody in it is only a crime if it was owned — parked cars are
+    // free pickings when nobody sits in them.
     if (car.driver === 'traffic') {
       game.police.addHeat(game, 1);
       game.addMessage('Car stolen! The SBPD is on to you.');
@@ -162,6 +242,21 @@ function exitCar(game) {
   // Step out to the side of the car.
   player.x = car.x + Math.cos(car.angle + Math.PI / 2) * 34;
   player.y = car.y + Math.sin(car.angle + Math.PI / 2) * 34;
+  slideOutOfBuildings(game.world, player, player.radius);
+  clampToWorld(player, 24);
+}
+
+function exitBoat(game) {
+  const player = game.player;
+  const boat = player.inBoat;
+  if (!boat) return;
+  boat.driver = null;
+  boat.speed *= 0.3;
+  player.inBoat = null;
+  // Step onto the nearest dry spot: pier, jetty or beach.
+  const shore = nearestShore(game.world, boat.x, boat.y);
+  player.x = shore.x;
+  player.y = shore.y;
   slideOutOfBuildings(game.world, player, player.radius);
   clampToWorld(player, 24);
 }
@@ -240,6 +335,13 @@ export function updateBullets(game, dt) {
         car.health -= 12;
         if (car.health <= 0) car.dead = true;
         b.life = 0;
+      }
+    }
+    for (const boat of game.boats) {
+      if (boat === game.player.inBoat) continue;
+      if (dist(boat.x, boat.y, b.x, b.y) < 30) {
+        b.life = 0;
+        game.addParticles(b.x, b.y, 4, '#9ad8ff');
       }
     }
   }

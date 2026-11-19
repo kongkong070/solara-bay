@@ -1,5 +1,6 @@
-// Save and load: the run's cash, story progress, packages, difficulty
-// and totals live in localStorage under one key.
+// Save and load: the run's cash, story progress, packages, boats and
+// helicopter rides, difficulty and totals live in localStorage under
+// one key.
 const SAVE_KEY = 'solara-bay-save-v1';
 
 export function saveGame(game) {
@@ -16,6 +17,8 @@ export function saveGame(game) {
       packagesTaken: game.missions.packages.map((p) => p.taken),
       earned: game.missions.earned,
       faresDone: game.missions.faresDone,
+      boatsRidden: game.missions.boatsRidden,
+      heliFlown: game.missions.heliFlown,
       bestWanted: game.police.bestWanted,
       timePlayed: game.timePlayed,
       clockMinutes: game.clockMinutes,
@@ -48,6 +51,8 @@ export function applySave(game, data) {
   game.missions.done = data.missionsDone ?? [];
   game.missions.earned = data.earned ?? 0;
   game.missions.faresDone = data.faresDone ?? 0;
+  game.missions.boatsRidden = data.boatsRidden ?? 0;
+  game.missions.heliFlown = data.heliFlown ?? 0;
   game.police.bestWanted = data.bestWanted ?? 0;
   game.timePlayed = data.timePlayed ?? 0;
   game.clockMinutes = data.clockMinutes ?? game.clockMinutes;

@@ -1,8 +1,8 @@
 // Cars: arcade driving physics, traffic that follows the road grid, and
-// parked cars the player can steal.
+// parked cars Rio can steal.
 import { WORLD, CAR_TYPES, PAINTS, TUNING } from './config.js';
 import { clamp, angleDiff } from './util.js';
-import { collideBuildings, clampToWorld, isOnRoad, nearestRoadPoint, randomRoadPoint } from './world.js';
+import { collideBuildings, clampToWorld, nearestRoadPoint, randomRoadPoint } from './world.js';
 
 export function makeCar(rng, type, x, y, angle) {
   const spec = CAR_TYPES[type] || CAR_TYPES.sedan;
@@ -30,7 +30,7 @@ export function makeCar(rng, type, x, y, angle) {
   };
 }
 
-// Arcade car physics shared by the player and the police.
+// Arcade car physics, shared by the player and the police interceptors.
 export function driveCar(car, dt, throttle, steer, handbrake) {
   const spec = car.spec;
   const maxSpeed = TUNING.carMaxSpeed * spec.top;
@@ -45,9 +45,9 @@ export function driveCar(car, dt, throttle, steer, handbrake) {
   car.speed = clamp(car.speed, -TUNING.carMaxSpeed * 0.35, maxSpeed);
   if (Math.abs(car.speed) < 4 && throttle === 0) car.speed = 0;
   const grip = handbrake ? 1.7 : 1;
-  const steerAmount = TUNING.carTurn * grip * steer *
+  const turn = TUNING.carTurn * grip * steer *
     clamp(Math.abs(car.speed) / 140, 0, 1) * (car.speed < 0 ? -1 : 1);
-  car.angle += steerAmount * dt;
+  car.angle += turn * dt;
   car.vx = Math.cos(car.angle) * car.speed;
   car.vy = Math.sin(car.angle) * car.speed;
   car.px = car.x;
@@ -56,8 +56,8 @@ export function driveCar(car, dt, throttle, steer, handbrake) {
   car.y += car.vy * dt;
 }
 
-// Traffic: cruise along its road, turn at intersections, slow for the car
-// ahead. Returns nothing; mutates the car.
+// Traffic: cruise along its road, turn at intersections, slow down for
+// the car ahead. Mutates the car, returns nothing.
 export function updateTraffic(car, dt, game) {
   if (car.wait > 0) {
     car.wait -= dt;
@@ -79,7 +79,7 @@ export function updateTraffic(car, dt, game) {
     car.dir = game.rng.next() < 0.5 ? 1 : -1;
     car.lane = (game.rng.next() < 0.5 ? -1 : 1) * 26;
   }
-  // Slow down for a car ahead.
+  // Ease off when a car is right ahead.
   let ahead = Infinity;
   for (const other of game.cars) {
     if (other === car || other.dead) continue;
@@ -90,16 +90,15 @@ export function updateTraffic(car, dt, game) {
     if (forward > 0 && forward < 130 && side < 30) ahead = Math.min(ahead, forward);
   }
   const cruise = 190 + (car.cruise || 0);
-  const throttle = ahead < 90 ? -0.4 : 1;
   const want = ahead < 90 ? 0 : cruise;
   const diff = angleDiff(car.angle, targetAngle);
   car.angle += clamp(diff, -2.2 * dt, 2.2 * dt);
-  car.speed += (want - car.speed) * Math.min(1, 1.6 * dt) * (throttle < 0 ? 2 : 1);
+  car.speed += (want - car.speed) * Math.min(1, 1.6 * dt) * (ahead < 90 ? 2 : 1);
   car.vx = Math.cos(car.angle) * car.speed;
   car.vy = Math.sin(car.angle) * car.speed;
   car.x += car.vx * dt;
   car.y += car.vy * dt;
-  // Never drive onto the beach or into the sea: turn back onto the grid.
+  // Never drive onto the beach or into the sea: swing back onto the grid.
   if (car.y > WORLD.beachTop - 120) {
     car.y = WORLD.beachTop - 120;
     car.axis = 'x';
@@ -136,7 +135,7 @@ export function spawnParked(game, count) {
 }
 
 // Simple circle collision between cars: push apart, trade a little speed,
-// dent both. Returns true when this car hit something hard.
+// dent both. True when this car hit something hard.
 export function collideCars(game, car) {
   let hard = false;
   for (const other of game.cars) {

@@ -1,10 +1,10 @@
-// Solara Bay's city: a road grid, building blocks, parks, the beach and
-// the sea, plus the collision helpers the rest of the game uses.
-import { WORLD, ROADS_X, ROADS_Y, LANDMARKS } from './config.js';
+// Solara Bay's city: the road grid, the building blocks, the parks, the
+// beach and the sea, plus the collision helpers the rest of the game uses.
+import { WORLD, ROADS_X, ROADS_Y, LANDMARKS, BUOYS } from './config.js';
 import { clamp, dist } from './util.js';
 
-// One city block's building: a rectangle with a height (for the fake
-// shadow) and a palette pick.
+// One city block's building: a rectangle, a palette pick, a height for
+// the fake shadow and a window count for the roof.
 function makeBuilding(rng, x, y, w, h) {
   const palettes = [
     ['#d8b48a', '#b98d5f'], ['#e8d8b0', '#c9b183'], ['#a8c8d8', '#7fa3b5'],
@@ -23,8 +23,8 @@ export function buildWorld(rng) {
   const buildings = [];
   const parks = [];
   const palms = [];
-  // Fill every block between neighbouring roads with buildings, leaving
-  // a couple of blocks as parks.
+  // Every block between neighbouring roads gets buildings, except the
+  // three blocks we keep as parks.
   const parkBlocks = new Set(['2,2', '5,1', '3,4']);
   for (let ix = 0; ix < ROADS_X.length - 1; ix++) {
     for (let iy = 0; iy < ROADS_Y.length - 1; iy++) {
@@ -38,8 +38,7 @@ export function buildWorld(rng) {
         continue;
       }
       // Two buildings per block, split along the longer side.
-      const horizontal = (x1 - x0) > (y1 - y0);
-      if (horizontal) {
+      if ((x1 - x0) > (y1 - y0)) {
         const mid = x0 + (x1 - x0) * rng.range(0.42, 0.58);
         buildings.push(makeBuilding(rng, x0 + 8, y0 + 8, mid - x0 - 16, y1 - y0 - 16));
         buildings.push(makeBuilding(rng, mid + 8, y0 + 8, x1 - mid - 16, y1 - y0 - 16));
@@ -50,7 +49,7 @@ export function buildWorld(rng) {
       }
     }
   }
-  // Palms along the beach and in the parks.
+  // Palms along the beach and inside the parks.
   for (let i = 0; i < 46; i++) {
     palms.push({
       x: rng.range(80, WORLD.width - 80),
@@ -67,11 +66,20 @@ export function buildWorld(rng) {
       });
     }
   }
-  // The pier reaches out into the sea from the beach.
+  // The pier reaches out from the beach into the sea.
   const pier = { x: 1660, y: WORLD.seaTop - 10, w: 120, h: 210 };
+  // The marina: a wooden jetty on the east side of the bay where the
+  // speedboats are moored, plus the buoy line for the Bay Runner run.
+  const marina = {
+    x: WORLD.marina.x - 150,
+    y: WORLD.seaTop - 10,
+    w: 300,
+    h: 150,
+  };
+  const buoys = BUOYS.map((b) => ({ x: b.x, y: b.y, r: 16 }));
   return {
     roadsX: ROADS_X, roadsY: ROADS_Y,
-    buildings, parks, palms, pier,
+    buildings, parks, palms, pier, marina, buoys,
     landmarks: LANDMARKS,
   };
 }
@@ -99,7 +107,7 @@ export function slideOutOfBuildings(world, ent, r) {
     ent.x = cx + (dx / d) * (r + 0.5);
     ent.y = cy + (dy / d) * (r + 0.5);
   } else if (ent.px !== undefined) {
-    // Centre inside the building: step back to the previous spot.
+    // The centre is inside the building: step back to the last good spot.
     ent.x = ent.px;
     ent.y = ent.py;
   }
@@ -154,4 +162,36 @@ export function collideBuildings(world, ent) {
 export function clampToWorld(ent, margin) {
   ent.x = clamp(ent.x, margin, WORLD.width - margin);
   ent.y = clamp(ent.y, margin, WORLD.height - margin);
+}
+
+// True when (x, y) is in open water — boats only, no walking there.
+export function isInWater(x, y) {
+  return y >= WORLD.waterTop;
+}
+
+// True when (x, y) is on the pier or the marina jetty (walkable wood
+// over the water).
+export function isOnDock(world, x, y) {
+  const pier = world.pier;
+  if (x > pier.x && x < pier.x + pier.w && y > pier.y && y < pier.y + pier.h) return true;
+  const marina = world.marina;
+  if (x > marina.x && x < marina.x + marina.w && y > marina.y && y < marina.y + marina.h) return true;
+  return false;
+}
+
+// The nearest dry spot to (x, y): the pier, the marina jetty, or the
+// beach just above the water line.
+export function nearestShore(world, x, y) {
+  const spots = [
+    { x: world.pier.x + world.pier.w / 2, y: world.pier.y + 30 },
+    { x: world.marina.x + world.marina.w / 2, y: world.marina.y + 30 },
+    { x: clamp(x, 60, WORLD.width - 60), y: WORLD.beachTop + 40 },
+  ];
+  let best = spots[0];
+  let bestD = Infinity;
+  for (const s of spots) {
+    const d = dist(x, y, s.x, s.y);
+    if (d < bestD) { bestD = d; best = s; }
+  }
+  return best;
 }

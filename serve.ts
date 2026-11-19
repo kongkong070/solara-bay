@@ -41,10 +41,15 @@ const server = createServer((req, res) => {
   }
   if (url.pathname === '/version') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ game: 'solara-bay', version: '0.4.0', difficulties: ['chill', 'normal', 'hardcore'] }));
+    res.end(JSON.stringify({
+      game: 'solara-bay',
+      version: '0.5.0',
+      difficulties: ['chill', 'normal', 'hardcore'],
+      features: ['cars', 'boats', 'helicopter', 'missions-8'],
+    }));
     return;
   }
-  let rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
+  const rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
   const file = join(gameDir, normalize(rel));
   if (!file.startsWith(gameDir) || !existsSync(file) || !statSync(file).isFile()) {
     res.writeHead(404, { 'content-type': 'text/plain' });

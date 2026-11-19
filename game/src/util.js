@@ -1,17 +1,18 @@
-// Small helpers shared by every Solara Bay module: a seedable random
-// generator, number clamps and angle math. Nothing here touches the DOM.
+// Shared helpers for every Solara Bay module: a seedable random source,
+// clamps, angle math and clock formatting. Nothing here touches the DOM.
+
 export function mulberry32(seed) {
-  let a = seed >>> 0;
+  let state = seed >>> 0;
   return function next() {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    state |= 0;
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-// A tiny random source with the helpers the game uses everywhere.
+// A small random source with the helpers the game reaches for everywhere.
 export function makeRng(seed) {
   const next = mulberry32(seed);
   return {
@@ -35,7 +36,9 @@ export function makeRng(seed) {
 }
 
 export function clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v;
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
 }
 
 export function lerp(a, b, t) {
@@ -50,8 +53,23 @@ export function angleDiff(from, to) {
   return d;
 }
 
+// Ease `from` toward `to` by a fraction of the shortest turn.
+export function angleLerp(from, to, t) {
+  return from + angleDiff(from, to) * clamp(t, 0, 1);
+}
+
 export function dist(ax, ay, bx, by) {
   return Math.hypot(bx - ax, by - ay);
+}
+
+// Distance from point (px, py) to the segment (ax, ay)-(bx, by).
+export function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  let t = lenSq > 0 ? ((px - ax) * dx + (py - ay) * dy) / lenSq : 0;
+  t = clamp(t, 0, 1);
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
 }
 
 // "17:30" style clock text from minutes after midnight.
@@ -66,5 +84,6 @@ export function fmtClock(minutes) {
 export function fmtDuration(sec) {
   const s = Math.max(0, Math.floor(sec));
   const m = Math.floor(s / 60);
-  return m > 0 ? m + 'm ' + String(s % 60).padStart(2, '0') + 's' : s + 's';
+  if (m > 0) return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
+  return s + 's';
 }

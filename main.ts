@@ -14,18 +14,26 @@ function fail(message) {
   process.exit(1);
 }
 
-if (!existsSync(join(here, 'game', 'index.html'))) {
+const gameDir = join(here, 'game');
+const shotDir = join(here, 'screenshots');
+if (!existsSync(join(gameDir, 'index.html'))) {
   fail('game/index.html is missing');
 }
-if (!existsSync(join(here, 'screenshots'))) {
+if (!existsSync(join(gameDir, 'src', 'main.js'))) {
+  fail('game/src/main.js is missing');
+}
+if (!existsSync(join(gameDir, 'src', 'boats.js'))) {
+  fail('game/src/boats.js is missing');
+}
+if (!existsSync(shotDir)) {
   fail('screenshots/ is missing');
 }
 
 mkdirSync(outDir, { recursive: true });
 rmSync(join(outDir, 'game'), { recursive: true, force: true });
 rmSync(join(outDir, 'screenshots'), { recursive: true, force: true });
-cpSync(join(here, 'game'), join(outDir, 'game'), { recursive: true });
-cpSync(join(here, 'screenshots'), join(outDir, 'screenshots'), { recursive: true });
+cpSync(gameDir, join(outDir, 'game'), { recursive: true });
+cpSync(shotDir, join(outDir, 'screenshots'), { recursive: true });
 
 const dossier = buildDossier(outDir, {
   text_max_bytes: 163840,

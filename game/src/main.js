@@ -8,9 +8,10 @@ import { createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { makePlayer, updatePlayer, updateBullets } from './player.js';
 import { spawnTraffic, spawnParked, updateTraffic } from './vehicles.js';
+import { spawnBoats, updateBoats } from './boats.js';
 import { spawnPeds, updatePeds } from './peds.js';
 import { makePolice, updatePolice } from './police.js';
-import { makeMissions, startNextMission, updateMissions } from './missions.js';
+import { makeMissions, startNextMission, updateMissions, updateHeli } from './missions.js';
 import { render } from './render.js';
 import { saveGame, loadGame, applySave } from './save.js';
 import { stageShot, shotSeed } from './shots.js';
@@ -42,6 +43,7 @@ function newGame() {
     recentShot: null,
     bustedReason: '',
     saveData: null,
+    heli: null,
   };
   game.input = createInput(canvas);
   game.audio = createAudio();
@@ -51,6 +53,7 @@ function newGame() {
   game.missions = makeMissions(game);
   game.cars = [];
   game.peds = [];
+  game.boats = [];
   game.saveData = loadGame();
   if (game.saveData && game.saveData.difficulty && DIFFICULTIES[game.saveData.difficulty]) {
     game.difficultyKey = game.saveData.difficulty;
@@ -94,6 +97,7 @@ function newGame() {
   spawnTraffic(game, 14);
   spawnParked(game, 9);
   spawnPeds(game, 26);
+  spawnBoats(game);
   return game;
 }
 
@@ -121,6 +125,8 @@ function updatePlaying(game, dt) {
   if (game.clockMinutes >= 1440) game.clockMinutes -= 1440;
   updatePlayer(game, dt);
   updateBullets(game, dt);
+  updateBoats(game, dt);
+  updateHeli(game, dt);
   for (const car of game.cars) {
     if (car.driver === 'traffic' && !car.dead) {
       // Traffic brains live in vehicles.js; call through the game.
@@ -165,9 +171,12 @@ function updatePlaying(game, dt) {
     game.audio.toggleMute();
   }
   upkeep(game, dt);
+  // Engine hum follows whatever Rio is driving or sailing.
+  const ride = game.player.inCar || game.player.inBoat;
+  const top = game.player.inBoat ? TUNING.boatMaxSpeed : TUNING.carMaxSpeed;
   game.audio.setEngine(
-    game.player.inCar ? Math.abs(game.player.inCar.speed) / (TUNING.carMaxSpeed * 1.3) : 0,
-    !!game.player.inCar,
+    ride ? Math.abs(ride.speed) / (top * 1.3) : 0,
+    !!ride,
   );
   game.audio.setSiren(game.police.wanted);
   game.audio.update(dt);
