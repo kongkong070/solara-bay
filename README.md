@@ -19,10 +19,10 @@ Or serve `game/` with any static server. The game is only static files under `ga
 
 | Key | Action |
 | --- | --- |
-| WASD / arrows | Move on foot, drive a car, sail a boat |
+| WASD / arrows | Move on foot, drive a car, sail a boat, fly the helicopter |
 | E | Enter / exit a car, a boat, or the helicopter |
 | F | Punch |
-| Mouse | Aim and shoot (click), R reload |
+| Mouse | Aim and shoot (click or hold), R reload |
 | Space | Handbrake |
 | Shift | Sprint |
 | M | Start the next story mission |

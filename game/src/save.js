@@ -1,72 +1,55 @@
-// Save and load: the run's cash, story progress, packages, boats and
-// helicopter rides, difficulty and totals live in localStorage under
-// one key.
-const SAVE_KEY = 'solara-bay-save-v1';
+// Save and load for Solara Bay: one JSON blob in localStorage holding the
+// run's progress. Saving never blocks play: a corrupt or missing save is
+// treated as "no save yet".
 
-export function saveGame(game) {
+import { SAVE_KEY } from './config.js';
+
+export function saveGame(S) {
+  if (S.shotMode) return false;
   try {
     const data = {
-      version: 1,
-      cash: game.player.cash,
-      health: game.player.health,
-      armor: game.player.armor,
-      ammo: game.player.ammo,
-      difficulty: game.difficultyKey,
-      missionIndex: game.missions.index,
-      missionsDone: game.missions.done,
-      packagesTaken: game.missions.packages.map((p) => p.taken),
-      earned: game.missions.earned,
-      faresDone: game.missions.faresDone,
-      boatsRidden: game.missions.boatsRidden,
-      heliFlown: game.missions.heliFlown,
-      bestWanted: game.police.bestWanted,
-      timePlayed: game.timePlayed,
-      clockMinutes: game.clockMinutes,
+      v: 1,
+      cash: Math.round(S.player.cash),
+      hp: Math.round(S.player.hp),
+      armor: Math.round(S.player.armor),
+      ammo: S.player.ammo,
+      difficulty: S.difficulty,
+      hour: S.clock.hour,
+      minute: S.clock.minute,
+      missionsDone: S.missions.done.slice(),
+      packagesTaken: S.city.packages.map((p) => (p.taken ? 1 : 0)),
+      stats: { ...S.stats },
+      x: Math.round(S.player.x),
+      y: Math.round(S.player.y),
+      savedAt: Date.now(),
     };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-  } catch (err) {
-    // Storage may be unavailable (private mode); the game plays on.
+    return true;
+  } catch {
+    return false;
   }
 }
 
-export function loadGame() {
+export function loadSave() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || data.version !== 1) return null;
+    if (!data || data.v !== 1) return null;
     return data;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
 
-export function applySave(game, data) {
-  if (!data) return;
-  game.player.cash = data.cash ?? game.player.cash;
-  game.player.health = data.health ?? game.player.health;
-  game.player.armor = data.armor ?? game.player.armor;
-  game.player.ammo = data.ammo ?? game.player.ammo;
-  game.missions.index = data.missionIndex ?? 0;
-  game.missions.done = data.missionsDone ?? [];
-  game.missions.earned = data.earned ?? 0;
-  game.missions.faresDone = data.faresDone ?? 0;
-  game.missions.boatsRidden = data.boatsRidden ?? 0;
-  game.missions.heliFlown = data.heliFlown ?? 0;
-  game.police.bestWanted = data.bestWanted ?? 0;
-  game.timePlayed = data.timePlayed ?? 0;
-  game.clockMinutes = data.clockMinutes ?? game.clockMinutes;
-  if (Array.isArray(data.packagesTaken)) {
-    data.packagesTaken.forEach((taken, i) => {
-      if (game.missions.packages[i]) game.missions.packages[i].taken = !!taken;
-    });
-  }
+export function hasSave() {
+  return loadSave() !== null;
 }
 
 export function clearSave() {
   try {
     window.localStorage.removeItem(SAVE_KEY);
-  } catch (err) {
-    // Ignore storage errors.
+  } catch {
+    // A save that cannot be cleared is harmless.
   }
 }

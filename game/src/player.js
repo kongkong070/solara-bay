@@ -1,373 +1,371 @@
-// Rio Vega, on foot, behind the wheel and at the helm: walking,
-// stealing cars and boats, punching, shooting, health and armour.
-import { WORLD, TUNING } from './config.js';
-import { clamp, dist } from './util.js';
-import { hitsBuilding, slideOutOfBuildings, clampToWorld, isInWater, isOnDock, nearestShore } from './world.js';
-import { nearestCar, collideCars, driveCar } from './vehicles.js';
-import { nearestBoat, driveBoat } from './boats.js';
-import { knockDown } from './peds.js';
+// Rio Vega on foot, behind the wheel, at the helm and in the helicopter:
+// movement, stealing cars and boats, punching, shooting and taking damage.
 
-export function makePlayer(x, y, cash) {
+import { PLAYER, WANTED } from './config.js';
+import { angleTo, clamp, dist } from './util.js';
+import { collideWalker } from './world.js';
+import { driveCar, nearestStealableCar } from './vehicles.js';
+import { nearestBoat, sailBoat, shorePointNear } from './boats.js';
+import { hitPed } from './peds.js';
+import { playShot } from './audio.js';
+import { addHeat } from './police.js';
+import { onBoardBoat, onBoardHeli, onEnterCar } from './missions.js';
+
+export function createPlayer(S) {
   return {
-    kind: 'player',
-    x, y,
-    px: x, py: y,
+    x: S.city.spawn.x,
+    y: S.city.spawn.y,
     angle: -Math.PI / 2,
-    speed: 0,
-    radius: 13,
-    health: TUNING.playerHealth,
+    hp: PLAYER.maxHp,
     armor: 0,
-    cash,
-    ammo: TUNING.startAmmo,
-    inCar: null,
-    inBoat: null,
-    inHeli: null,
-    aimX: x,
-    aimY: y,
+    ammo: PLAYER.startAmmo,
+    mag: 12,
+    magSize: 12,
+    cash: 150,
+    speed: 0,
+    mode: 'foot', // foot | car | boat | heli
+    vehicle: null,
+    boat: null,
+    heli: null,
     punchTimer: 0,
-    shootTimer: 0,
-    reloadTimer: 0,
-    dead: false,
+    shootCooldown: 0,
+    muzzle: 0,
   };
 }
 
-// Step the player for one frame. `game` is the whole game object.
-export function updatePlayer(game, dt) {
-  const player = game.player;
-  const input = game.input;
-  if (player.dead) return;
-  player.px = player.x;
-  player.py = player.y;
-  player.punchTimer = Math.max(0, player.punchTimer - dt);
-  player.shootTimer = Math.max(0, player.shootTimer - dt);
-  player.reloadTimer = Math.max(0, player.reloadTimer - dt);
+export function updatePlayer(S, dt) {
+  const p = S.player;
+  const input = S.input;
+  p.punchTimer = Math.max(0, p.punchTimer - dt);
+  p.shootCooldown = Math.max(0, p.shootCooldown - dt);
+  p.muzzle = Math.max(0, p.muzzle - dt);
 
-  if (player.inHeli) {
-    // Riding the extraction helicopter: Rio goes where it goes.
-    const heli = player.inHeli;
-    player.x = heli.x;
-    player.y = heli.y;
-    player.angle = heli.angle;
-    player.speed = 0;
-    return;
-  }
-  if (player.inBoat) {
-    updateBoating(game, dt);
-    return;
-  }
-  if (player.inCar) {
-    updateDriving(game, dt);
-    return;
+  if (p.mode === 'foot') updateOnFoot(S, dt);
+  else if (p.mode === 'car' && p.vehicle) updateInCar(S, dt);
+  else if (p.mode === 'boat' && p.boat) updateInBoat(S, dt);
+  else if (p.mode === 'heli' && p.heli) updateInHeli(S, dt);
+  else {
+    p.mode = 'foot';
+    p.vehicle = null;
+    p.boat = null;
+    p.heli = null;
   }
 
-  const mv = input.moveVector();
-  const sprint = input.down('ShiftLeft') || input.down('ShiftRight');
-  const speed = sprint ? TUNING.sprintSpeed : TUNING.walkSpeed;
-  player.x += mv.x * speed * dt;
-  player.y += mv.y * speed * dt;
-  if (mv.x !== 0 || mv.y !== 0) player.angle = Math.atan2(mv.y, mv.x);
-  player.speed = (mv.x !== 0 || mv.y !== 0) ? speed : 0;
-  slideOutOfBuildings(game.world, player, player.radius);
-  clampToWorld(player, 24);
-  // Rio cannot wade into the sea — the pier and the marina jetty are
-  // the only dry ways over the water.
-  if (isInWater(player.x, player.y) && !isOnDock(game.world, player.x, player.y)) {
-    player.x = player.px;
-    player.y = player.py;
+  // Aim follows the mouse while on foot.
+  if (p.mode === 'foot' && S.mouseWorld) {
+    p.angle = angleTo(p.x, p.y, S.mouseWorld.x, S.mouseWorld.y);
   }
 
-  // Aim at the mouse (screen space -> world space via the camera).
-  const cam = game.camera;
-  player.aimX = cam.x + input.mouse.x - game.view.w / 2;
-  player.aimY = cam.y + input.mouse.y - game.view.h / 2;
-
-  // Punch.
-  if (input.wasPressed('KeyF') && player.punchTimer <= 0) {
-    player.punchTimer = 0.45;
-    doPunch(game);
-  }
-  // Shoot with the mouse, R reloads.
-  if (input.down('Mouse0') || input.mouse.down) {
-    if (player.shootTimer <= 0 && player.reloadTimer <= 0) {
-      if (player.ammo > 0) {
-        player.shootTimer = 0.16;
-        shootBullet(game);
-      } else {
-        player.reloadTimer = 1.1;
-      }
-    }
-  }
-  if (input.wasPressed('KeyR') && player.ammo < TUNING.startAmmo) {
-    player.reloadTimer = 1.1;
-    player.ammo = TUNING.startAmmo;
-  }
-  // Enter a car, a boat, or the waiting helicopter.
-  if (input.wasPressed('KeyE')) {
-    tryEnterVehicle(game);
+  if (input.mouseClicked && p.mode === 'foot') tryShoot(S);
+  if (input.mouseDown && p.mode === 'foot' && p.shootCooldown <= 0 && p.mag > 0) {
+    tryShoot(S);
   }
 }
 
-function updateDriving(game, dt) {
-  const player = game.player;
-  const input = game.input;
-  const car = player.inCar;
-  const mv = input.moveVector();
-  const handbrake = input.down('Space');
-  const throttle = mv.y < 0 ? 1 : mv.y > 0 ? -0.7 : 0;
-  const steer = mv.x;
-  driveCar(car, dt, throttle, steer, handbrake);
-  player.x = car.x;
-  player.y = car.y;
-  player.px = car.x;
-  player.py = car.y;
-  player.angle = car.angle;
-  player.speed = Math.abs(car.speed);
-  // Bounce off buildings and other cars.
-  if (hitsBuilding(game.world, car.x, car.y, 20)) {
-    slideOutOfBuildings(game.world, car, 20);
-    car.speed *= 0.5;
-    player.x = car.x;
-    player.y = car.y;
+function updateOnFoot(S, dt) {
+  const p = S.player;
+  const input = S.input;
+  const mv = { x: 0, y: 0 };
+  if (input.keys.left) mv.x -= 1;
+  if (input.keys.right) mv.x += 1;
+  if (input.keys.up) mv.y -= 1;
+  if (input.keys.down) mv.y += 1;
+  const sprint = !!input.keys.sprint;
+  const speed = sprint ? PLAYER.sprintSpeed : PLAYER.walkSpeed;
+  let mx = mv.x;
+  let my = mv.y;
+  if (mx !== 0 && my !== 0) {
+    mx *= Math.SQRT1_2;
+    my *= Math.SQRT1_2;
   }
-  collideCars(game, car);
-  clampToWorld(car, 24);
-  player.x = car.x;
-  player.y = car.y;
-  // Skid particles when the handbrake is down at speed.
-  if (handbrake && Math.abs(car.speed) > 120 && game.rng.next() < 0.5) {
-    game.addParticles(car.x - Math.cos(car.angle) * 20, car.y - Math.sin(car.angle) * 20, 1, '#bbbbbb');
-  }
-  // Step out of the car.
-  if (input.wasPressed('KeyE')) {
-    exitCar(game);
-  }
-  // Change the radio station.
-  if (input.wasPressed('KeyC')) {
-    game.audio.nextStation();
-  }
-  // Running a pedestrian over while driving counts as a crime.
-  for (const ped of game.peds) {
-    if (ped.state === 'down') continue;
-    if (dist(ped.x, ped.y, car.x, car.y) < 30 && Math.abs(car.speed) > 60) {
-      knockDown(game, ped);
-      game.police.addHeat(game, 1);
-      game.audio.punch();
+  p.x += mx * speed * dt;
+  p.y += my * speed * dt;
+  p.speed = (mx !== 0 || my !== 0) ? speed : 0;
+  collideWalker(p, PLAYER.radius, S.city);
+
+  if (input.pressed.punch) doPunch(S);
+  if (input.pressed.enter) tryEnter(S);
+  if (input.pressed.reload) reloadMag(S);
+}
+
+function updateInCar(S, dt) {
+  const p = S.player;
+  const input = S.input;
+  const car = p.vehicle;
+  p.speed = driveCar(S, car, {
+    up: !!input.keys.up,
+    down: !!input.keys.down,
+    left: !!input.keys.left,
+    right: !!input.keys.right,
+    handbrake: !!input.keys.handbrake,
+  }, dt);
+  p.x = car.x;
+  p.y = car.y;
+  p.angle = car.angle;
+  if (input.pressed.enter) exitCar(S);
+  // Running over pedestrians is a crime, and it counts.
+  for (const ped of S.peds) {
+    if (ped.state === 'ride') continue;
+    if (dist(ped.x, ped.y, car.x, car.y) < 26 && Math.abs(p.speed) > 120) {
+      if (hitPed(S, ped)) addHeat(S, WANTED.hitPedHeat);
     }
   }
 }
 
-// At the helm: throttle, steer, and step back onto dry land.
-function updateBoating(game, dt) {
-  const player = game.player;
-  const input = game.input;
-  const boat = player.inBoat;
-  const mv = input.moveVector();
-  const throttle = mv.y < 0 ? 1 : mv.y > 0 ? -0.6 : 0;
-  const steer = mv.x;
-  driveBoat(boat, dt, throttle, steer);
-  player.x = boat.x;
-  player.y = boat.y;
-  player.px = boat.x;
-  player.py = boat.y;
-  player.angle = boat.angle;
-  player.speed = Math.abs(boat.speed);
-  // Spray when the boat is really moving.
-  if (Math.abs(boat.speed) > 200 && game.rng.next() < 0.4) {
-    game.addParticles(
-      boat.x - Math.cos(boat.angle) * 26 + game.rng.range(-10, 10),
-      boat.y - Math.sin(boat.angle) * 26 + game.rng.range(-10, 10),
-      1, '#ffffff',
-    );
-  }
-  // Step off onto the nearest shore.
-  if (input.wasPressed('KeyE')) {
-    exitBoat(game);
-  }
-  // The radio plays on the water too.
-  if (input.wasPressed('KeyC')) {
-    game.audio.nextStation();
-  }
-  game.audio.setEngine(Math.abs(boat.speed) / (TUNING.boatMaxSpeed * 1.3), true);
+// The car the player leaves behind stays where it is, ready to steal again.
+
+function updateInBoat(S, dt) {
+  const p = S.player;
+  const input = S.input;
+  const boat = p.boat;
+  p.speed = sailBoat(S, boat, {
+    up: !!input.keys.up,
+    down: !!input.keys.down,
+    left: !!input.keys.left,
+    right: !!input.keys.right,
+  }, dt);
+  p.x = boat.x;
+  p.y = boat.y;
+  p.angle = boat.angle;
+  if (input.pressed.enter) exitBoat(S);
 }
 
-function tryEnterVehicle(game) {
-  const player = game.player;
-  // The extraction helicopter takes priority when it is waiting.
-  if (game.heli && game.heli.state === 'landed' &&
-    dist(player.x, player.y, game.heli.x, game.heli.y) < 80) {
-    player.inHeli = game.heli;
-    game.heli.state = 'boarding';
-    game.heli.timer = 0;
-    game.addMessage('You are aboard — hold on!');
-    game.audio.select();
+function updateInHeli(S, dt) {
+  const p = S.player;
+  const input = S.input;
+  const heli = p.heli;
+  const mv = { x: 0, y: 0 };
+  if (input.keys.left) mv.x -= 1;
+  if (input.keys.right) mv.x += 1;
+  if (input.keys.up) mv.y -= 1;
+  if (input.keys.down) mv.y += 1;
+  const speed = 420;
+  heli.x += mv.x * speed * dt;
+  heli.y += mv.y * speed * dt;
+  heli.x = clamp(heli.x, 60, 3540);
+  heli.y = clamp(heli.y, 60, 2740);
+  heli.rotor += dt * 22;
+  if (mv.x !== 0 || mv.y !== 0) {
+    heli.angle = Math.atan2(mv.y, mv.x);
+  }
+  p.x = heli.x;
+  p.y = heli.y;
+  p.angle = heli.angle;
+  p.speed = (mv.x !== 0 || mv.y !== 0) ? speed : 0;
+  if (input.pressed.enter && heli.altitude < 5) exitHeli(S);
+}
+
+function tryEnter(S) {
+  const p = S.player;
+  // The helicopter comes first: it only lands for the finale.
+  if (S.heli && S.heli.landed && dist(p.x, p.y, S.heli.x, S.heli.y) < 90) {
+    boardHeli(S);
     return;
   }
-  const car = nearestCar(game, player.x, player.y, 64);
-  if (car) {
-    enterCar(game, car);
-    return;
-  }
-  const boat = nearestBoat(game, player.x, player.y, 80);
+  const boat = nearestBoat(S, 70);
   if (boat) {
-    player.inBoat = boat;
-    boat.driver = 'player';
-    game.addMessage('You took the ' + boat.spec.name + '. The bay is yours.');
-    game.audio.select();
+    boardBoat(S, boat);
+    return;
+  }
+  const car = nearestStealableCar(S, 70);
+  if (car) {
+    boardCar(S, car);
   }
 }
 
-function enterCar(game, car) {
-  const player = game.player;
-  player.inCar = car;
-  if (car.driver !== 'player') {
-    // Stealing a car someone was driving is a crime; a parked car with
-    // nobody in it is only a crime if it was owned — parked cars are
-    // free pickings when nobody sits in them.
-    if (car.driver === 'traffic') {
-      game.police.addHeat(game, 1);
-      game.addMessage('Car stolen! The SBPD is on to you.');
-    }
-    car.driver = 'player';
+function boardCar(S, car) {
+  const p = S.player;
+  // Taking a car that is not parked empty is grand theft: the law notices.
+  if (car.traffic) {
+    addHeat(S, WANTED.stealCarHeat);
+    S.banner = { text: 'Car stolen — the SBPD is on its way', t: 2.5 };
   }
-  game.audio.select();
+  const pi = S.parked.indexOf(car);
+  if (pi >= 0) S.parked.splice(pi, 1);
+  const ti = S.traffic.indexOf(car);
+  if (ti >= 0) S.traffic.splice(ti, 1);
+  p.vehicle = car;
+  p.mode = 'car';
+  p.x = car.x;
+  p.y = car.y;
+  p.angle = car.angle;
+  p.speed = 0;
+  S.stats.carsStolen = (S.stats.carsStolen || 0) + 1;
+  onEnterCar(S, car);
 }
 
-function exitCar(game) {
-  const player = game.player;
-  const car = player.inCar;
-  if (!car) return;
-  car.driver = null;
+function boardBoat(S, boat) {
+  const p = S.player;
+  boat.occupied = true;
+  p.boat = boat;
+  p.mode = 'boat';
+  p.x = boat.x;
+  p.y = boat.y;
+  p.angle = boat.angle;
+  p.speed = 0;
+  S.stats.boatsRidden = (S.stats.boatsRidden || 0) + 1;
+  S.banner = { text: 'Aboard the ' + boat.label + ' — the bay is yours', t: 2.5 };
+  onBoardBoat(S, boat);
+}
+
+function boardHeli(S) {
+  const p = S.player;
+  S.heli.landed = false;
+  S.heli.altitude = 10;
+  p.heli = S.heli;
+  p.mode = 'heli';
+  p.x = S.heli.x;
+  p.y = S.heli.y;
+  S.stats.heliRides = (S.stats.heliRides || 0) + 1;
+  S.banner = { text: "Lena's helicopter — fly to the escape point over the bay", t: 3 };
+  onBoardHeli(S);
+}
+
+function exitCar(S) {
+  const p = S.player;
+  const car = p.vehicle;
   car.speed = 0;
-  player.inCar = null;
-  // Step out to the side of the car.
-  player.x = car.x + Math.cos(car.angle + Math.PI / 2) * 34;
-  player.y = car.y + Math.sin(car.angle + Math.PI / 2) * 34;
-  slideOutOfBuildings(game.world, player, player.radius);
-  clampToWorld(player, 24);
+  const side = car.angle + Math.PI / 2;
+  p.x = car.x + Math.cos(side) * 34;
+  p.y = car.y + Math.sin(side) * 34;
+  collideWalker(p, PLAYER.radius, S.city);
+  if (!S.parked.includes(car)) S.parked.push(car);
+  p.vehicle = null;
+  p.mode = 'foot';
+  p.speed = 0;
 }
 
-function exitBoat(game) {
-  const player = game.player;
-  const boat = player.inBoat;
-  if (!boat) return;
-  boat.driver = null;
-  boat.speed *= 0.3;
-  player.inBoat = null;
-  // Step onto the nearest dry spot: pier, jetty or beach.
-  const shore = nearestShore(game.world, boat.x, boat.y);
-  player.x = shore.x;
-  player.y = shore.y;
-  slideOutOfBuildings(game.world, player, player.radius);
-  clampToWorld(player, 24);
+function exitBoat(S) {
+  const p = S.player;
+  const boat = p.boat;
+  boat.occupied = false;
+  boat.speed = 0;
+  const spot = shorePointNear(S, boat);
+  p.x = spot.x;
+  p.y = spot.y;
+  collideWalker(p, PLAYER.radius, S.city);
+  p.boat = null;
+  p.mode = 'foot';
+  p.speed = 0;
 }
 
-function doPunch(game) {
-  const player = game.player;
-  game.audio.punch();
+function exitHeli(S) {
+  const p = S.player;
+  p.heli = null;
+  p.mode = 'foot';
+  p.speed = 0;
+  collideWalker(p, PLAYER.radius, S.city);
+}
+
+function doPunch(S) {
+  const p = S.player;
+  if (p.punchTimer > 0) return;
+  p.punchTimer = 0.45;
   const reach = 46;
-  const px = player.x + Math.cos(player.angle) * reach;
-  const py = player.y + Math.sin(player.angle) * reach;
-  for (const ped of game.peds) {
-    if (ped.state === 'down') continue;
-    if (dist(ped.x, ped.y, px, py) < 34) {
-      knockDown(game, ped);
-      game.police.addHeat(game, 1);
-      game.addMessage('You decked a pedestrian!');
+  for (const ped of S.peds) {
+    if (dist(ped.x, ped.y, p.x, p.y) < reach) {
+      ped.state = 'flee';
+      ped.wait = 2.5;
+      ped.angle = angleTo(p.x, p.y, ped.x, ped.y);
+      addHeat(S, WANTED.hitPedHeat * 0.5);
       return;
     }
   }
-  for (const cop of game.police.cops) {
-    if (cop.down) continue;
-    if (dist(cop.x, cop.y, px, py) < 36) {
-      cop.down = true;
-      cop.downTimer = 6;
-      game.addParticles(cop.x, cop.y, 10, '#3050c8');
-      game.police.addHeat(game, 1);
+  for (const cop of S.cops) {
+    if (dist(cop.x, cop.y, p.x, p.y) < reach) {
+      cop.hp -= PLAYER.punchDamage;
+      cop.angle = angleTo(p.x, p.y, cop.x, cop.y);
+      addHeat(S, WANTED.hitPedHeat * 0.5);
       return;
     }
   }
 }
 
-function shootBullet(game) {
-  const player = game.player;
-  player.ammo -= 1;
-  const aim = Math.atan2(player.aimY - player.y, player.aimX - player.x);
-  game.bullets.push({
-    x: player.x + Math.cos(aim) * 20,
-    y: player.y + Math.sin(aim) * 20,
-    vx: Math.cos(aim) * 900,
-    vy: Math.sin(aim) * 900,
-    life: 0.9,
+function reloadMag(S) {
+  const p = S.player;
+  const need = p.magSize - p.mag;
+  if (need <= 0 || p.ammo <= 0) return;
+  const take = Math.min(need, p.ammo);
+  p.mag += take;
+  p.ammo -= take;
+}
+
+function tryShoot(S) {
+  const p = S.player;
+  if (p.shootCooldown > 0 || p.mag <= 0) {
+    if (p.mag <= 0) S.banner = { text: 'Out of ammo — find a supply crate', t: 2 };
+    return;
+  }
+  p.shootCooldown = 0.22;
+  p.mag -= 1;
+  p.muzzle = 0.08;
+  playShot(S.audio);
+  S.events.shotFired = 0.6;
+  S.events.shotX = p.x;
+  S.events.shotY = p.y;
+  addHeat(S, WANTED.shootHeat);
+
+  // Find the closest person roughly along the aim line.
+  const aim = p.angle;
+  let best = null;
+  let bestScore = Infinity;
+  const consider = (t, list) => {
+    const d = dist(p.x, p.y, t.x, t.y);
+    if (d > PLAYER.gunRange) return;
+    const a = angleTo(p.x, p.y, t.x, t.y);
+    let diff = Math.abs(a - aim);
+    if (diff > Math.PI) diff = Math.PI * 2 - diff;
+    if (diff > 0.14) return;
+    const score = d + diff * 900;
+    if (score < bestScore) {
+      bestScore = score;
+      best = { target: t, list };
+    }
+  };
+  for (const ped of S.peds) if (ped.state !== 'ride') consider(ped, 'ped');
+  for (const cop of S.cops) consider(cop, 'cop');
+  const bx = p.x + Math.cos(aim) * 26;
+  const by = p.y + Math.sin(aim) * 26;
+  const ex = best ? best.target.x : p.x + Math.cos(aim) * PLAYER.gunRange;
+  const ey = best ? best.target.y : p.y + Math.sin(aim) * PLAYER.gunRange;
+  S.particles.push({
+    x: bx, y: by, vx: 0, vy: 0, life: 0.07, maxLife: 0.07,
+    color: '#ffe9a8', size: 2, kind: 'tracer', x2: ex, y2: ey,
   });
-  game.recentShot = { x: player.x, y: player.y, t: 0.6 };
-  game.audio.shot();
-  game.police.addHeat(game, 1);
-}
-
-// Bullets fly, hit peds, cops and cars, and die on walls.
-export function updateBullets(game, dt) {
-  for (const b of game.bullets) {
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
-    b.life -= dt;
-    if (hitsBuilding(game.world, b.x, b.y, 2)) b.life = 0;
-    for (const ped of game.peds) {
-      if (ped.state === 'down') continue;
-      if (dist(ped.x, ped.y, b.x, b.y) < 16) {
-        knockDown(game, ped);
-        game.police.addHeat(game, 1);
-        b.life = 0;
-      }
+  if (!best) return;
+  if (best.list === 'ped') {
+    best.target.state = 'flee';
+    best.target.wait = 4;
+    best.target.angle = angleTo(p.x, p.y, best.target.x, best.target.y);
+  } else {
+    best.target.hp -= PLAYER.gunDamage;
+    if (best.target.hp <= 0) {
+      S.cops.splice(S.cops.indexOf(best.target), 1);
+      addHeat(S, WANTED.killCopHeat);
+      S.banner = { text: 'Officer down — heat rising', t: 2 };
     }
-    for (const cop of game.police.cops) {
-      if (cop.down) continue;
-      if (dist(cop.x, cop.y, b.x, b.y) < 16) {
-        cop.down = true;
-        cop.downTimer = 6;
-        game.addParticles(cop.x, cop.y, 10, '#3050c8');
-        game.police.addHeat(game, 1);
-        b.life = 0;
-      }
-    }
-    for (const car of game.cars) {
-      if (car === game.player.inCar) continue;
-      if (dist(car.x, car.y, b.x, b.y) < 26) {
-        car.health -= 12;
-        if (car.health <= 0) car.dead = true;
-        b.life = 0;
-      }
-    }
-    for (const boat of game.boats) {
-      if (boat === game.player.inBoat) continue;
-      if (dist(boat.x, boat.y, b.x, b.y) < 30) {
-        b.life = 0;
-        game.addParticles(b.x, b.y, 4, '#9ad8ff');
-      }
-    }
-  }
-  game.bullets = game.bullets.filter((b) => b.life > 0);
-  if (game.recentShot) {
-    game.recentShot.t -= dt;
-    if (game.recentShot.t <= 0) game.recentShot = null;
   }
 }
 
-// Damage the player: armour soaks 60% first.
-export function hurtPlayer(game, amount) {
-  const player = game.player;
-  if (player.dead) return;
-  let rest = amount;
-  if (player.armor > 0) {
-    const soaked = Math.min(player.armor, rest * 0.6);
-    player.armor -= soaked;
-    rest -= soaked;
+export function damagePlayer(S, amount) {
+  const p = S.player;
+  let left = amount;
+  if (p.armor > 0) {
+    const absorbed = Math.min(p.armor, left);
+    p.armor -= absorbed;
+    left -= absorbed;
   }
-  player.health -= rest;
-  if (player.health <= 0) {
-    player.health = 0;
-    player.dead = true;
-    game.state = 'busted';
-    game.bustedReason = 'You were busted by the SBPD.';
-    game.audio.busted();
+  p.hp -= left;
+  if (p.hp <= 0) {
+    p.hp = 0;
+    return true;
   }
+  return false;
+}
+
+export function healPlayer(S, hp, armor, ammo) {
+  const p = S.player;
+  p.hp = Math.min(PLAYER.maxHp, p.hp + hp);
+  p.armor = Math.min(PLAYER.maxArmor, p.armor + armor);
+  p.ammo = Math.min(PLAYER.maxAmmo, p.ammo + ammo);
 }

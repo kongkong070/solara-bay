@@ -1,11 +1,6 @@
-# Solara Bay build artefacts and local tooling output.
-shot-tools/
 out/
-kit.json
-RULES.txt
-requirements.json
-howto.txt
+node_modules/
+shot-tools/
+shot-tools/node_modules/
 *.log
-*.tmp
 .DS_Store
-verify-*.mjs

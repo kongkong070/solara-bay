@@ -1,130 +1,134 @@
-// Pedestrians: they stroll the sidewalks and the beach, run from gunfire
-// and police chases, and a few of them are looking for a taxi.
-import { WORLD } from './config.js';
-import { clamp, dist } from './util.js';
-import { hitsBuilding, clampToWorld } from './world.js';
+// The people of Solara Bay: pedestrians who stroll the sidewalks, scatter
+// when shots are fired, and wave down taxis when they need a ride.
 
-const SHIRTS = ['#d85a5a', '#5a8ad8', '#5ad88a', '#d8c95a', '#a05ad8', '#d88a5a', '#5ad8c9', '#e8e8e8'];
+import { PLAYER, WORLD_H, WORLD_W } from './config.js';
+import { clamp, dist, pick, range, rangeInt } from './util.js';
+import { collideWalker, onRoad, randomRoadPoint } from './world.js';
 
-export function makePed(rng, x, y) {
+const SHIRT_COLORS = ['#e07856', '#7fb069', '#6a8caf', '#c77dff', '#f2c14e', '#e8b4b8', '#a3d2ca', '#f4a261'];
+const SKIN_COLORS = ['#f2c9a0', '#d9a06b', '#a06b3f', '#8a5a2e', '#f7d7b5'];
+
+export function spawnPeds(S, count) {
+  S.peds = [];
+  for (let i = 0; i < count; i++) {
+    const spot = randomRoadPoint(S.rng, S.city);
+    S.peds.push(makePed(S, spot.x + range(S.rng, -120, 120), spot.y + range(S.rng, -120, 120)));
+  }
+}
+
+function makePed(S, x, y) {
   return {
-    kind: 'ped',
-    x, y,
-    px: x, py: y,
-    angle: rng.range(0, Math.PI * 2),
-    speed: rng.range(28, 52),
-    radius: 11,
-    shirt: rng.pick(SHIRTS),
-    skin: rng.pick(['#e8b88a', '#c98d5f', '#8a5f3d', '#f0c8a0']),
-    state: 'walk', // 'walk' | 'flee' | 'down'
-    targetX: x,
-    targetY: y,
-    retarget: 0,
-    fleeX: 0,
-    fleeY: 0,
-    wantsTaxi: false,
-    dead: false,
+    x: clamp(x, 620, WORLD_W - 40),
+    y: clamp(y, 40, WORLD_H - 40),
+    angle: S.rng() * Math.PI * 2,
+    speed: range(S.rng, 45, 80),
+    shirt: pick(S.rng, SHIRT_COLORS),
+    skin: pick(S.rng, SKIN_COLORS),
+    state: 'walk', // walk | flee | wave | ride
+    wait: range(S.rng, 0, 4),
+    targetX: 0,
+    targetY: 0,
+    taxi: false,
+    fare: null,
   };
 }
 
-export function spawnPeds(game, count) {
-  for (let i = 0; i < count; i++) {
-    // Most peds walk the city; a few stroll the beach.
-    const onBeach = game.rng.chance(0.15);
-    const x = game.rng.range(120, WORLD.width - 120);
-    const y = onBeach
-      ? game.rng.range(WORLD.beachTop + 30, WORLD.seaTop - 40)
-      : game.rng.range(120, WORLD.beachTop - 60);
-    if (hitsBuilding(game.world, x, y, 14)) continue;
-    const ped = makePed(game.rng, x, y);
-    // About one in eight pedestrians wants a cab.
-    ped.wantsTaxi = game.rng.chance(0.12);
-    game.peds.push(ped);
-  }
+function pickStrollTarget(S, ped) {
+  const spot = randomRoadPoint(S.rng, S.city);
+  ped.targetX = spot.x + range(S.rng, -160, 160);
+  ped.targetY = spot.y + range(S.rng, -160, 160);
+  ped.wait = range(S.rng, 1, 5);
 }
 
-// Pick a fresh nearby spot for a pedestrian to stroll toward.
-function pickStrollTarget(game, ped) {
-  const a = game.rng.range(0, Math.PI * 2);
-  const d = game.rng.range(60, 260);
-  ped.targetX = clamp(ped.x + Math.cos(a) * d, 60, WORLD.width - 60);
-  ped.targetY = clamp(ped.y + Math.sin(a) * d, 60, WORLD.beachTop - 40);
-  ped.retarget = game.rng.range(2, 6);
-}
+export function updatePeds(S, dt) {
+  const p = S.player;
+  for (const ped of S.peds) {
+    if (ped.state === 'ride') continue;
 
-export function updatePeds(game, dt) {
-  const player = game.player;
-  for (const ped of game.peds) {
-    if (ped.dead) continue;
-    ped.px = ped.x;
-    ped.py = ped.y;
-    // Run from gunfire, speeding cars, police chases and boats tearing
-    // past the shore.
-    let danger = null;
-    if (game.recentShot && dist(ped.x, ped.y, game.recentShot.x, game.recentShot.y) < 320) {
-      danger = game.recentShot;
-    } else if (player.inCar && Math.abs(player.inCar.speed) > 260 &&
-      dist(ped.x, ped.y, player.x, player.y) < 200) {
-      danger = player;
-    } else if (player.inBoat && Math.abs(player.inBoat.speed) > 200 &&
-      dist(ped.x, ped.y, player.x, player.y) < 220) {
-      danger = player;
-    } else if (game.police.wanted > 0 && dist(ped.x, ped.y, player.x, player.y) < 160) {
-      danger = player;
-    }
-    if (danger) {
+    // A gunshot or a speeding car nearby sends everyone running.
+    const nearShot = S.events.shotFired > 0 && dist(ped.x, ped.y, S.events.shotX, S.events.shotY) < 420;
+    const nearCar = p.vehicle && dist(ped.x, ped.y, p.x, p.y) < 90 && p.speed > 260;
+    if ((nearShot || nearCar) && ped.state !== 'flee') {
       ped.state = 'flee';
-      ped.fleeX = ped.x - danger.x;
-      ped.fleeY = ped.y - danger.y;
-      const d = Math.hypot(ped.fleeX, ped.fleeY) || 1;
-      ped.fleeX /= d;
-      ped.fleeY /= d;
-    } else if (ped.state === 'flee') {
-      ped.state = 'walk';
-      pickStrollTarget(game, ped);
+      ped.wait = range(S.rng, 1.2, 2.4);
+      ped.angle = Math.atan2(ped.y - p.y, ped.x - p.x);
     }
+
     if (ped.state === 'flee') {
-      ped.x += ped.fleeX * 150 * dt;
-      ped.y += ped.fleeY * 150 * dt;
-      ped.angle = Math.atan2(ped.fleeY, ped.fleeX);
-    } else {
-      ped.retarget -= dt;
-      const dx = ped.targetX - ped.x;
-      const dy = ped.targetY - ped.y;
-      const d = Math.hypot(dx, dy);
-      if (d < 12 || ped.retarget <= 0) {
-        pickStrollTarget(game, ped);
-      } else {
-        ped.angle = Math.atan2(dy, dx);
-        ped.x += (dx / d) * ped.speed * dt;
-        ped.y += (dy / d) * ped.speed * dt;
+      ped.wait -= dt;
+      ped.x += Math.cos(ped.angle) * 190 * dt;
+      ped.y += Math.sin(ped.angle) * 190 * dt;
+      collideWalker(ped, 12, S.city);
+      if (ped.wait <= 0) ped.state = 'walk';
+      continue;
+    }
+
+    if (ped.state === 'wave') {
+      // Waving peds stand still, arm up, hoping a car stops.
+      ped.wait -= dt;
+      if (ped.wait <= 0) {
+        ped.state = 'walk';
+        ped.taxi = false;
+      }
+      continue;
+    }
+
+    // Strolling: drift toward a target, then pause and pick a new one.
+    if (ped.wait > 0) {
+      ped.wait -= dt;
+      if (ped.wait <= 0) pickStrollTarget(S, ped);
+      continue;
+    }
+    const d = dist(ped.x, ped.y, ped.targetX, ped.targetY);
+    if (d < 12) {
+      ped.wait = range(S.rng, 0.5, 3);
+      continue;
+    }
+    ped.angle = Math.atan2(ped.targetY - ped.y, ped.targetX - ped.x);
+    ped.x += Math.cos(ped.angle) * ped.speed * dt;
+    ped.y += Math.sin(ped.angle) * ped.speed * dt;
+    collideWalker(ped, 12, S.city);
+  }
+
+  // Keep a few peds waving for fares while the player is driving.
+  if (S.mode === 'playing' && p.vehicle && !S.fare.active) {
+    const waving = S.peds.filter((q) => q.state === 'wave').length;
+    if (waving === 0 && S.rng() < dt * 0.25) {
+      const near = S.peds.filter((q) => q.state === 'walk' && dist(q.x, q.y, p.x, p.y) < 700);
+      if (near.length > 0) {
+        const chosen = near[rangeInt(S.rng, 0, near.length - 1)];
+        chosen.state = 'wave';
+        chosen.taxi = true;
+        chosen.wait = 25;
       }
     }
-    if (hitsBuilding(game.world, ped.x, ped.y, ped.radius)) {
-      ped.x = ped.px;
-      ped.y = ped.py;
-      pickStrollTarget(game, ped);
-    }
-    clampToWorld(ped, 30);
   }
 }
 
-// Knock a pedestrian down with a punch or a car. Returns the ped.
-export function knockDown(game, ped) {
-  ped.state = 'down';
-  ped.dead = false;
-  game.addParticles(ped.x, ped.y, 8, '#d85a5a');
-  return ped;
+// The player just ran into a pedestrian with a car. Returns true when the
+// hit was hard enough to count as a crime.
+export function hitPed(S, ped) {
+  const p = S.player;
+  if (p.speed < 120) return false;
+  ped.state = 'flee';
+  ped.wait = 3;
+  ped.angle = Math.atan2(ped.y - p.y, ped.x - p.x);
+  ped.x += Math.cos(ped.angle) * 60;
+  ped.y += Math.sin(ped.angle) * 60;
+  collideWalker(ped, 12, S.city);
+  return true;
 }
 
-// The nearest pedestrian who wants a taxi, within range of (x, y).
-export function nearestFarePed(game, x, y, maxDist) {
+export function nearestWavingPed(S, maxDist) {
   let best = null;
   let bestD = maxDist;
-  for (const ped of game.peds) {
-    if (!ped.wantsTaxi || ped.state === 'down') continue;
-    const d = dist(ped.x, ped.y, x, y);
-    if (d < bestD) { bestD = d; best = ped; }
+  for (const ped of S.peds) {
+    if (ped.state !== 'wave') continue;
+    const d = dist(ped.x, ped.y, S.player.x, S.player.y);
+    if (d < bestD) {
+      best = ped;
+      bestD = d;
+    }
   }
   return best;
 }

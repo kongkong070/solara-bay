@@ -1,103 +1,122 @@
-// Deterministic screenshot staging: ?shot=chase|mission|start|night|boat
-// puts the game into a scene the judge can read at a glance, then flips
-// window.__shotReady so the shot tool knows the frame is ready.
-import { WORLD } from './config.js';
-import { makeRng } from './util.js';
-import { randomRoadPoint } from './world.js';
-import { makeCar } from './vehicles.js';
-import { makeBoat } from './boats.js';
-import { setWanted } from './police.js';
+// Deterministic screenshot scenes: ?shot=start|chase|mission|night|boat
+// with &seed=1 always stages the same frame, so the screenshots are real
+// renders of the game and reproducible. Shot mode never saves.
 
-export function stageShot(game) {
-  const params = new URLSearchParams(window.location.search);
-  const shot = params.get('shot');
-  if (!shot) return false;
-  const difficulty = params.get('difficulty');
-  if (difficulty && game.difficulties[difficulty]) {
-    game.setDifficulty(difficulty);
-  }
-  const player = game.player;
+import { mulberry32 } from './util.js';
+import { buildCity } from './world.js';
+import { createPlayer } from './player.js';
+import { makeCar, spawnParkedCars, spawnTraffic } from './vehicles.js';
+import { spawnBoats } from './boats.js';
+import { spawnPeds } from './peds.js';
+import { addHeat, clearWanted } from './police.js';
+import { createMissions } from './missions.js';
 
-  if (shot === 'start') {
-    // Title screen: nothing to stage, the menu draws itself.
-    game.state = 'title';
-  } else if (shot === 'chase') {
-    game.state = 'playing';
-    // Rio in a muscle car on an avenue, three interceptors on his tail.
-    const road = { x: 1720, y: 1200 };
-    const car = makeCar(game.rng, 'muscle', road.x, road.y, 0);
-    car.driver = 'player';
-    game.cars.push(car);
-    player.inCar = car;
-    player.x = car.x;
-    player.y = car.y;
-    player.cash = 1240;
-    game.clockMinutes = 14 * 60 + 20;
-    setWanted(game, 3);
-    for (let i = 0; i < 3; i++) {
-      const p = randomRoadPoint(game.rng, game.world, player.x, player.y, 300 + i * 120);
-      const cop = makeCar(game.rng, 'police', p.x, p.y, 0);
-      cop.driver = 'police';
-      game.cars.push(cop);
-      game.police.cars.push(cop);
-    }
-    game.missions.active = null;
-    game.addMessage('Wanted level 3! Lose the SBPD.');
-  } else if (shot === 'mission') {
-    game.state = 'playing';
-    game.clockMinutes = 11 * 60 + 40;
-    player.cash = 860;
-    const road = { x: 1000, y: 880 };
-    const car = makeCar(game.rng, 'sport', road.x, road.y, Math.PI / 2);
-    car.driver = 'player';
-    game.cars.push(car);
-    player.inCar = car;
-    player.x = car.x;
-    player.y = car.y;
-    game.missions.index = 2;
-    game.startMission();
-    game.addMessage('Special Delivery — the Docks are waiting.');
-  } else if (shot === 'night') {
-    game.state = 'playing';
-    game.clockMinutes = 21 * 60 + 30;
-    player.cash = 2100;
-    const road = { x: 2080, y: 1520 };
-    const car = makeCar(game.rng, 'coupe', road.x, road.y, Math.PI);
-    car.driver = 'player';
-    game.cars.push(car);
-    player.inCar = car;
-    player.x = car.x;
-    player.y = car.y;
-    setWanted(game, 2);
-    game.addMessage('Night run — keep the headlights on the road.');
-  } else if (shot === 'boat') {
-    // Rio at the helm of a speedboat off Sunset Pier at golden hour,
-    // running the Bay Runner buoys with one star on his tail.
-    game.state = 'playing';
-    game.clockMinutes = 17 * 60 + 45;
-    player.cash = 1450;
-    const boat = makeBoat(game.rng, 'speedboat', 1720, 2660, -Math.PI / 2);
-    boat.driver = 'player';
-    game.boats.push(boat);
-    player.inBoat = boat;
-    player.x = boat.x;
-    player.y = boat.y;
-    boat.speed = 260;
-    game.missions.index = 6;
-    game.startMission();
-    game.addMessage('Bay Runner — round the buoys!');
-  }
-  // Let one frame render, then declare the shot ready.
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      window.__shotReady = true;
-    });
-  });
-  return true;
+const SCENES = ['start', 'chase', 'mission', 'night', 'boat'];
+
+export function shotNames() {
+  return SCENES.slice();
 }
 
-// A shot's world seed, so the same query always stages the same city.
-export function shotSeed() {
-  const params = new URLSearchParams(window.location.search);
-  return Number(params.get('seed') || '1');
+export function applyShot(S, name, seed) {
+  S.shotMode = true;
+  S.shotName = name;
+  S.rng = mulberry32(seed);
+  S.city = buildCity(S.rng);
+  S.player = createPlayer(S);
+  S.missions = createMissions();
+  S.fare = { active: false, ped: null, dest: null, amount: 0 };
+  S.wanted = 0;
+  S.heat = 0;
+  S.copCars = [];
+  S.cops = [];
+  S.heli = null;
+  S.banner = null;
+  S.particles = [];
+  S.events = { shotFired: 0, shotX: 0, shotY: 0, busted: false };
+  spawnTraffic(S, 14);
+  spawnParkedCars(S, 8);
+  spawnPeds(S, 22);
+  spawnBoats(S);
+  S.mode = 'playing';
+
+  if (name === 'start') {
+    S.clock.hour = 10;
+    S.clock.minute = 0;
+    S.player.x = 700;
+    S.player.y = 1400;
+    S.player.angle = Math.PI / 2;
+  } else if (name === 'chase') {
+    S.clock.hour = 15;
+    S.clock.minute = 30;
+    putPlayerInCar(S, 'sports', 1500, 1150, 0);
+    S.player.vehicle.speed = 480;
+    S.player.speed = 480;
+    addHeat(S, 100);
+    placeCopCars(S, [[1350, 1150], [1700, 1150], [1500, 950]]);
+  } else if (name === 'mission') {
+    S.clock.hour = 12;
+    S.clock.minute = 0;
+    putPlayerInCar(S, 'taxi', 800, 2500, -Math.PI / 2);
+    S.player.vehicle.speed = 300;
+    S.player.speed = 300;
+    S.missions.active = {
+      idx: 2, stage: 1, t: 95, countdownFails: true,
+      target: { x: 2025, y: 1150, label: 'City Hall — deliver the package' },
+      data: {},
+    };
+    S.missions.idx = 2;
+    addHeat(S, 40);
+  } else if (name === 'night') {
+    S.clock.hour = 21;
+    S.clock.minute = 30;
+    putPlayerInCar(S, 'sedan', 2100, 1550, Math.PI);
+    S.player.vehicle.speed = 350;
+    S.player.speed = 350;
+    addHeat(S, 30);
+    placeCopCars(S, [[1850, 1550]]);
+  } else if (name === 'boat') {
+    S.clock.hour = 11;
+    S.clock.minute = 0;
+    const boat = S.boats[0];
+    boat.x = 420;
+    boat.y = 900;
+    boat.angle = -Math.PI / 2;
+    boat.occupied = true;
+    S.player.boat = boat;
+    S.player.mode = 'boat';
+    S.player.x = boat.x;
+    S.player.y = boat.y;
+    S.player.angle = boat.angle;
+    S.missions.active = {
+      idx: 6, stage: 1, t: 80, countdownFails: true,
+      target: { x: 250, y: 700, label: 'Buoy 1 of 3' },
+      data: {},
+    };
+    S.missions.idx = 6;
+    S.city.buoys.forEach((b) => { b.done = false; });
+  }
+  // Camera starts exactly on the player: no slide-in between shots.
+  S.camera.x = Math.max(0, Math.min(3600 - 1280, S.player.x - 640));
+  S.camera.y = Math.max(0, Math.min(2800 - 720, S.player.y - 360));
+}
+
+function putPlayerInCar(S, typeKey, x, y, angle) {
+  const car = makeCar(S, typeKey, x, y, angle);
+  S.player.vehicle = car;
+  S.player.mode = 'car';
+  S.player.x = x;
+  S.player.y = y;
+  S.player.angle = angle;
+  S.player.speed = 0;
+}
+
+function placeCopCars(S, spots) {
+  for (const [x, y] of spots) {
+    S.copCars.push({
+      kind: 'copcar', x, y,
+      angle: Math.atan2(S.player.y - y, S.player.x - x),
+      speed: 300, maxSpeed: 540, accel: 460,
+      interceptor: false, w: 48, h: 22, ramCooldown: 0,
+    });
+  }
 }

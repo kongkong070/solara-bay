@@ -1,105 +1,105 @@
-// Boats on the bay: speedboats and dinghies moored at the marina and
-// the pier, with water physics — slower to get going than a car, but
-// they glide, drift and leave a wake behind them.
-import { WORLD, BOAT_TYPES, TUNING } from './config.js';
-import { clamp, angleDiff } from './util.js';
-import { clampToWorld } from './world.js';
+// Boats: speedboats and a dinghy moored at the marina and the pier. The
+// SBPD cannot follow onto the water, but the heat is still on when the
+// player comes back to shore.
 
-export function makeBoat(rng, type, x, y, angle) {
-  const spec = BOAT_TYPES[type] || BOAT_TYPES.speedboat;
+import { BOAT_TYPES, SEA_EDGE, WORLD_H } from './config.js';
+import { clamp, dist, range } from './util.js';
+import { onPier } from './world.js';
+
+export function spawnBoats(S) {
+  S.boats = [
+    makeBoat(S, 'speedboat', 420, 250, Math.PI / 2, 'Marina'),
+    makeBoat(S, 'speedboat', 420, 340, Math.PI / 2, 'Marina'),
+    makeBoat(S, 'dinghy', 400, 1420, 0, 'Sunset Pier'),
+  ];
+}
+
+export function makeBoat(S, typeKey, x, y, angle, mooring) {
+  const type = BOAT_TYPES[typeKey];
   return {
     kind: 'boat',
-    type,
-    spec,
+    type: typeKey,
+    label: type.label,
+    color: type.color,
     x, y,
-    angle: angle || 0,
+    angle,
     speed: 0,
-    vx: 0, vy: 0,
-    w: spec.w, h: spec.h,
-    radius: 24,
-    color: spec.color,
-    driver: null, // 'player' | null (moored)
-    bob: rng.range(0, Math.PI * 2),
+    maxSpeed: type.maxSpeed,
+    accel: type.accel,
+    turn: type.turn,
+    w: type.w,
+    h: type.h,
+    mooring,
+    occupied: false,
     wakeTimer: 0,
   };
 }
 
-// Water physics: gentle acceleration, low drag so the boat glides,
-// wide turns that bite less at low speed.
-export function driveBoat(boat, dt, throttle, steer) {
-  const spec = boat.spec;
-  const maxSpeed = TUNING.boatMaxSpeed * spec.top;
-  if (throttle > 0) {
-    boat.speed += TUNING.boatAccel * spec.accel * throttle * dt;
-  } else if (throttle < 0) {
-    boat.speed -= TUNING.boatAccel * 0.5 * dt;
-  }
-  boat.speed -= boat.speed * TUNING.boatDrag * dt;
-  boat.speed = clamp(boat.speed, -TUNING.boatMaxSpeed * 0.25, maxSpeed);
-  if (Math.abs(boat.speed) < 5 && throttle === 0) boat.speed = 0;
-  const bite = clamp(Math.abs(boat.speed) / 120, 0, 1);
-  boat.angle += TUNING.boatTurn * steer * bite * (boat.speed < 0 ? -1 : 1) * dt;
-  boat.vx = Math.cos(boat.angle) * boat.speed;
-  boat.vy = Math.sin(boat.angle) * boat.speed;
-  boat.x += boat.vx * dt;
-  boat.y += boat.vy * dt;
-  // Boats stay in the water: the beach line is a wall, the world edges too.
-  if (boat.y < WORLD.waterTop) {
-    boat.y = WORLD.waterTop;
+// Sail a boat: throttle, slow wide turns, heavy drag. Boats stay in the
+// water — the shore and the pier push them back.
+export function sailBoat(S, boat, input, dt) {
+  const type = BOAT_TYPES[boat.type];
+  let throttle = 0;
+  if (input.up) throttle = 1;
+  if (input.down) throttle = -0.5;
+  const steer = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+
+  boat.speed += throttle * type.accel * dt;
+  boat.speed -= boat.speed * 0.5 * dt;
+  boat.speed = clamp(boat.speed, -140, type.maxSpeed);
+
+  const authority = clamp(Math.abs(boat.speed) / 200, 0, 1);
+  boat.angle += steer * authority * type.turn * 0.5 * (boat.speed >= 0 ? 1 : -1) * dt;
+
+  boat.x += Math.cos(boat.angle) * boat.speed * dt;
+  boat.y += Math.sin(boat.angle) * boat.speed * dt;
+
+  // Confined to the sea: the beach line, the map edges and the pier deck.
+  boat.x = clamp(boat.x, 40, SEA_EDGE + 70);
+  boat.y = clamp(boat.y, 40, WORLD_H - 40);
+  if (onPier(boat.x, boat.y, S.city)) {
+    boat.x -= Math.cos(boat.angle) * boat.speed * dt * 2;
+    boat.y -= Math.sin(boat.angle) * boat.speed * dt * 2;
     boat.speed *= 0.4;
   }
-  clampToWorld(boat, 30);
-}
 
-// Three boats wait for Rio: two speedboats and a dinghy.
-export function spawnBoats(game) {
-  const spots = [
-    { type: 'speedboat', x: WORLD.marina.x + 40, y: WORLD.marina.y + 110, angle: Math.PI / 2 },
-    { type: 'speedboat', x: WORLD.pierDock.x - 90, y: WORLD.pierDock.y + 30, angle: 0 },
-    { type: 'dinghy', x: WORLD.marina.x + 220, y: WORLD.marina.y + 110, angle: Math.PI / 2 },
-  ];
-  for (const s of spots) {
-    game.boats.push(makeBoat(game.rng, s.type, s.x, s.y, s.angle));
+  // Wake: white flecks trailing the stern while moving.
+  boat.wakeTimer -= dt;
+  if (Math.abs(boat.speed) > 60 && boat.wakeTimer <= 0) {
+    boat.wakeTimer = 0.05;
+    const bx = boat.x - Math.cos(boat.angle) * (boat.w / 2);
+    const by = boat.y - Math.sin(boat.angle) * (boat.h / 2);
+    S.particles.push({
+      x: bx + range(S.rng, -6, 6),
+      y: by + range(S.rng, -6, 6),
+      vx: -Math.cos(boat.angle) * 40 + range(S.rng, -20, 20),
+      vy: -Math.sin(boat.angle) * 40 + range(S.rng, -20, 20),
+      life: 0.9, maxLife: 0.9,
+      color: 'rgba(240,250,255,0.55)', size: range(S.rng, 3, 7), kind: 'wake',
+    });
   }
+  return boat.speed;
 }
 
-// Bob on the swell and throw a wake while moving.
-export function updateBoats(game, dt) {
-  for (const boat of game.boats) {
-    boat.bob += dt * 1.6;
-    boat.wakeTimer -= dt;
-    if (Math.abs(boat.speed) > 90 && boat.wakeTimer <= 0) {
-      boat.wakeTimer = 0.09;
-      const back = boat.angle + Math.PI;
-      game.addParticles(
-        boat.x + Math.cos(back) * (boat.w / 2) + game.rng.range(-8, 8),
-        boat.y + Math.sin(back) * (boat.w / 2) + game.rng.range(-8, 8),
-        1, '#d8ecff',
-      );
-    }
-  }
-}
-
-// The nearest moored boat to (x, y), within maxDist.
-export function nearestBoat(game, x, y, maxDist) {
+export function nearestBoat(S, maxDist) {
   let best = null;
   let bestD = maxDist;
-  for (const boat of game.boats) {
-    if (boat.driver) continue;
-    const d = Math.hypot(boat.x - x, boat.y - y);
-    if (d < bestD) { bestD = d; best = boat; }
+  for (const boat of S.boats) {
+    if (boat.occupied) continue;
+    const d = dist(boat.x, boat.y, S.player.x, S.player.y);
+    if (d < bestD) {
+      best = boat;
+      bestD = d;
+    }
   }
   return best;
 }
 
-// The nearest boat of a given type, moored or driven, for mission steps.
-export function nearestBoatOfType(game, type, x, y) {
-  let best = null;
-  let bestD = Infinity;
-  for (const boat of game.boats) {
-    if (boat.type !== type) continue;
-    const d = Math.hypot(boat.x - x, boat.y - y);
-    if (d < bestD) { bestD = d; best = boat; }
+// Step back onto land: the pier deck or the beach edge.
+export function shorePointNear(S, boat) {
+  if (onPier(boat.x, boat.y, S.city)) {
+    return { x: boat.x, y: boat.y };
   }
-  return best;
+  // Nearest point on the beach, just east of the waterline.
+  return { x: SEA_EDGE + 16, y: clamp(boat.y, 60, WORLD_H - 60) };
 }

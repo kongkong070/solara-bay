@@ -1,89 +1,125 @@
-// Shared helpers for every Solara Bay module: a seedable random source,
-// clamps, angle math and clock formatting. Nothing here touches the DOM.
+// Small helpers shared by every Solara Bay module. Nothing here knows about
+// the game state: each helper takes the numbers it needs and returns a number.
 
 export function mulberry32(seed) {
-  let state = seed >>> 0;
+  let a = seed >>> 0;
   return function next() {
-    state |= 0;
-    state = (state + 0x6d2b79f5) | 0;
-    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
-    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
-    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-// A small random source with the helpers the game reaches for everywhere.
-export function makeRng(seed) {
-  const next = mulberry32(seed);
-  return {
-    next,
-    range(min, max) {
-      return min + (max - min) * next();
-    },
-    int(min, max) {
-      return Math.floor(min + (max - min + 1) * next());
-    },
-    pick(list) {
-      return list[Math.floor(next() * list.length)];
-    },
-    chance(p) {
-      return next() < p;
-    },
-    sign() {
-      return next() < 0.5 ? -1 : 1;
-    },
-  };
+export function hashSeed(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }
 
 export function clamp(v, lo, hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
-  return v;
+  return v < lo ? lo : v > hi ? hi : v;
 }
 
 export function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-// Shortest signed turn from angle `from` toward angle `to`.
-export function angleDiff(from, to) {
-  let d = (to - from) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  return d;
-}
-
-// Ease `from` toward `to` by a fraction of the shortest turn.
-export function angleLerp(from, to, t) {
-  return from + angleDiff(from, to) * clamp(t, 0, 1);
+export function dist2(ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  return dx * dx + dy * dy;
 }
 
 export function dist(ax, ay, bx, by) {
-  return Math.hypot(bx - ax, by - ay);
+  return Math.sqrt(dist2(ax, ay, bx, by));
 }
 
-// Distance from point (px, py) to the segment (ax, ay)-(bx, by).
-export function distToSegment(px, py, ax, ay, bx, by) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  let t = lenSq > 0 ? ((px - ax) * dx + (py - ay) * dy) / lenSq : 0;
-  t = clamp(t, 0, 1);
-  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+export function angleTo(ax, ay, bx, by) {
+  return Math.atan2(by - ay, bx - ax);
 }
 
-// "17:30" style clock text from minutes after midnight.
-export function fmtClock(minutes) {
-  const m = ((Math.floor(minutes) % 1440) + 1440) % 1440;
-  const h = Math.floor(m / 60);
-  const mm = m % 60;
-  return String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+export function angleDiff(a, b) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
 }
 
-// "3m 12s" style duration text from seconds.
-export function fmtDuration(sec) {
-  const s = Math.max(0, Math.floor(sec));
+export function turnToward(angle, target, maxStep) {
+  const d = angleDiff(angle, target);
+  if (d > maxStep) return angle + maxStep;
+  if (d < -maxStep) return angle - maxStep;
+  return target;
+}
+
+export function pick(rng, list) {
+  return list[Math.floor(rng() * list.length)];
+}
+
+export function range(rng, lo, hi) {
+  return lo + rng() * (hi - lo);
+}
+
+export function rangeInt(rng, lo, hi) {
+  return lo + Math.floor(rng() * (hi - lo + 1));
+}
+
+export function pointInRect(x, y, r) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+export function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// Push a circle (x, y, radius) out of a solid rectangle. Returns true when
+// a push happened, and mutates the position object passed in.
+export function pushOutOfRect(pos, radius, r) {
+  const nx = clamp(pos.x, r.x, r.x + r.w);
+  const ny = clamp(pos.y, r.y, r.y + r.h);
+  const dx = pos.x - nx;
+  const dy = pos.y - ny;
+  const d2 = dx * dx + dy * dy;
+  if (d2 >= radius * radius) return false;
+  if (d2 > 0.0001) {
+    const d = Math.sqrt(d2);
+    pos.x = nx + (dx / d) * radius;
+    pos.y = ny + (dy / d) * radius;
+  } else {
+    // Centre is inside the rectangle: shove out along the smallest side.
+    const left = pos.x - r.x;
+    const right = r.x + r.w - pos.x;
+    const top = pos.y - r.y;
+    const bottom = r.y + r.h - pos.y;
+    const m = Math.min(left, right, top, bottom);
+    if (m === left) pos.x = r.x - radius;
+    else if (m === right) pos.x = r.x + r.w + radius;
+    else if (m === top) pos.y = r.y - radius;
+    else pos.y = r.y + r.h + radius;
+  }
+  return true;
+}
+
+export function fmtMoney(n) {
+  return '$' + Math.round(n).toLocaleString('en-US');
+}
+
+export function fmtClock(hour, minute) {
+  const h = Math.floor(hour) % 24;
+  const m = Math.floor(minute) % 60;
+  const hh = h < 10 ? '0' + h : '' + h;
+  const mm = m < 10 ? '0' + m : '' + m;
+  return hh + ':' + mm;
+}
+
+export function fmtTime(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
   const m = Math.floor(s / 60);
-  if (m > 0) return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
-  return s + 's';
+  const r = s % 60;
+  return m + ':' + (r < 10 ? '0' + r : '' + r);
 }
